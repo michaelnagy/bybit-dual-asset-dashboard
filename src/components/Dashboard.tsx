@@ -1,0 +1,283 @@
+'use client';
+
+import React, { useEffect, useState, useMemo } from 'react';
+import { fetchDualAssetTransactions, DualAssetTransaction } from '@/lib/dataService';
+import {
+    LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
+    PieChart, Pie, Cell, BarChart, Bar
+} from 'recharts';
+import { ArrowUpRight, ArrowDownRight, Activity, PieChart as PieChartIcon, TrendingUp, DollarSign, Target, Clock, ShieldCheck, CheckCircle2 } from 'lucide-react';
+
+export default function Dashboard() {
+    const [transactions, setTransactions] = useState<DualAssetTransaction[]>([]);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        async function loadData() {
+            try {
+                const data = await fetchDualAssetTransactions();
+                setTransactions(data);
+            } finally {
+                setLoading(false);
+            }
+        }
+        loadData();
+    }, []);
+
+    // Compute metrics
+    const summary = useMemo(() => {
+        if (!transactions.length) return null;
+
+        let totalProfitUsdt = 0;
+        const tokenProfits: Record<string, number> = {};
+        const winLoss = { wins: 0, losses: 0, totalCompleted: 0 };
+        let sumTargetPriceObj: Record<string, { sum: number, count: number }> = {};
+        const capitalAllocation: Record<string, number> = {};
+
+        // Sort transactions by date ascending for line charts
+        const sortedTimeline = [...transactions].sort((a, b) => a.settlementTime.getTime() - b.settlementTime.getTime());
+        const timelineData: any[] = [];
+
+        let cumulativeUsdtProfit = 0;
+
+        sortedTimeline.forEach(tx => {
+            // Target Avg Price tracking
+            if (!sumTargetPriceObj[tx.productName]) sumTargetPriceObj[tx.productName] = { sum: 0, count: 0 };
+            sumTargetPriceObj[tx.productName].sum += tx.targetPrice;
+            sumTargetPriceObj[tx.productName].count += 1;
+
+            // Capital Allocation (Simplistically using token as proxy for value, ideally we'd normalize to USDT)
+            if (!capitalAllocation[tx.investmentToken]) capitalAllocation[tx.investmentToken] = 0;
+            capitalAllocation[tx.investmentToken] += tx.investmentAmount;
+
+            if (tx.status === 'Completed' || tx.profitAmount !== null) {
+                winLoss.totalCompleted++;
+                if (tx.winOrLoss === 'Win') winLoss.wins++;
+                else if (tx.winOrLoss === 'Loss') winLoss.losses++;
+
+                const token = tx.profitToken || tx.proceedsToken;
+                const profit = tx.profitAmount || 0;
+
+                if (token) {
+                    if (token === 'USDT') totalProfitUsdt += profit;
+                    if (!tokenProfits[token]) tokenProfits[token] = 0;
+                    tokenProfits[token] += profit;
+                }
+
+                // Timeline Chart Builder
+                if (token === 'USDT') cumulativeUsdtProfit += profit;
+                timelineData.push({
+                    date: tx.settlementTime.toLocaleDateString(),
+                    name: tx.productName,
+                    profit: profit,
+                    token: token,
+                    cumulativeUsdtProfit
+                });
+            }
+        });
+
+        const avgTargetPrices = Object.keys(sumTargetPriceObj).map(prod => ({
+            product: prod,
+            avgPrice: sumTargetPriceObj[prod].sum / sumTargetPriceObj[prod].count
+        }));
+
+        const winRatio = winLoss.totalCompleted > 0 ? (winLoss.wins / winLoss.totalCompleted) * 100 : 0;
+
+        const allocationPieData = Object.keys(capitalAllocation).map(token => ({
+            name: token,
+            value: capitalAllocation[token]
+        }));
+
+        return {
+            totalProfitUsdt,
+            tokenProfits,
+            winRatio,
+            avgTargetPrices,
+            timelineData,
+            allocationPieData
+        };
+    }, [transactions]);
+
+    if (loading) return (
+        <div className="flex items-center justify-center min-h-screen bg-slate-950 text-white">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-500"></div>
+        </div>
+    );
+
+    return (
+        <div className="min-h-screen bg-slate-950 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-indigo-900/20 via-slate-950 to-slate-950 text-slate-100 p-6 md:p-10 font-sans selection:bg-emerald-500/30">
+
+            {/* Header */}
+            <header className="mb-10 animate-pulse-fade">
+                <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-cyan-400 drop-shadow-sm">
+                    Dual Asset Intelligence
+                </h1>
+                <p className="text-slate-400 mt-2 text-lg">Your automated Bybit yield tracker</p>
+            </header>
+
+            {/* Top Metrics Row */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                <MetricCard
+                    title="Total USDT Profit"
+                    value={`$${summary?.totalProfitUsdt.toFixed(2)}`}
+                    icon={<DollarSign className="w-5 h-5 text-emerald-400" />}
+                    trend="+12%" // Example static trend for visuals
+                />
+                <MetricCard
+                    title="Conversion Ratio (Win Rate)"
+                    value={`${summary?.winRatio.toFixed(1)}%`}
+                    icon={<Target className="w-5 h-5 text-amber-400" />}
+                />
+                <div className="col-span-1 lg:col-span-2 bg-slate-800/40 backdrop-blur-xl border border-slate-700/50 rounded-2xl p-6 shadow-xl relative overflow-hidden group">
+                    <div className="absolute w-64 h-64 bg-cyan-500/5 blur-3xl rounded-full -top-10 -right-10 pointer-events-none"></div>
+                    <h3 className="text-sm font-medium text-slate-400 mb-4 flex items-center gap-2">
+                        <Activity className="w-4 h-4" /> Average Target Prices (Strike)
+                    </h3>
+                    <div className="grid grid-cols-2 gap-4">
+                        {summary?.avgTargetPrices.map(tp => (
+                            <div key={tp.product} className="bg-slate-900/40 p-3 rounded-xl border border-slate-700/30">
+                                <p className="text-xs text-slate-500 mb-1">{tp.product}</p>
+                                <p className="text-xl font-bold font-mono tracking-tight text-slate-100">
+                                    {tp.avgPrice.toFixed(4)}
+                                </p>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            </div>
+
+            {/* Main Charts area */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+
+                {/* Line Chart: Consolidated USDT Profit */}
+                <div className="lg:col-span-2 bg-slate-800/30 backdrop-blur-md border border-slate-700/50 rounded-2xl p-6 shadow-2xl relative overflow-hidden group hover:border-slate-600/50 transition-colors">
+                    <div className="absolute inset-0 bg-gradient-to-t from-emerald-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-700 pointer-events-none" />
+                    <h3 className="text-lg font-semibold text-white mb-6 flex items-center gap-2">
+                        <TrendingUp className="w-5 h-5 text-emerald-400" />
+                        Consolidated Profit Timeline (USDT)
+                    </h3>
+                    <div className="h-72 w-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <LineChart data={summary?.timelineData}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
+                                <XAxis dataKey="date" stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} />
+                                <YAxis stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(val) => `$${val}`} />
+                                <Tooltip
+                                    contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }}
+                                    itemStyle={{ color: '#e2e8f0' }}
+                                />
+                                <Line type="monotone" dataKey="cumulativeUsdtProfit" stroke="#34d399" strokeWidth={3} dot={{ r: 4, fill: '#059669', strokeWidth: 2 }} activeDot={{ r: 8, stroke: '#10b981', strokeWidth: 2 }} animationDuration={1500} />
+                            </LineChart>
+                        </ResponsiveContainer>
+                    </div>
+                </div>
+
+                {/* Capital Allocation */}
+                <div className="bg-slate-800/30 backdrop-blur-md border border-slate-700/50 rounded-2xl p-6 shadow-2xl hover:border-slate-600/50 transition-colors">
+                    <h3 className="text-lg font-semibold text-white mb-6 flex items-center gap-2">
+                        <PieChartIcon className="w-5 h-5 text-cyan-400" />
+                        Investment Allocation
+                    </h3>
+                    <div className="h-64 pt-4">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <PieChart>
+                                <Pie
+                                    data={summary?.allocationPieData}
+                                    cx="50%"
+                                    cy="50%"
+                                    innerRadius={70}
+                                    outerRadius={90}
+                                    paddingAngle={8}
+                                    dataKey="value"
+                                    stroke="none"
+                                    animationDuration={1000}
+                                >
+                                    {summary?.allocationPieData.map((entry, index) => (
+                                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                    ))}
+                                </Pie>
+                                <Tooltip
+                                    contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px' }}
+                                />
+                                <Legend verticalAlign="bottom" height={36} iconType="circle" />
+                            </PieChart>
+                        </ResponsiveContainer>
+                    </div>
+                </div>
+            </div>
+
+            {/* Transactions Table */}
+            <div className="bg-slate-800/30 backdrop-blur-md border border-slate-700/50 rounded-2xl p-6 shadow-2xl overflow-x-auto hover:border-slate-600/50 transition-colors">
+                <h3 className="text-lg font-semibold text-white mb-6 flex items-center gap-2">
+                    <Clock className="w-5 h-5 text-indigo-400" />
+                    Target Match Transactions
+                </h3>
+                <table className="w-full text-left border-collapse">
+                    <thead>
+                        <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-400">
+                            <th className="pb-4 font-medium px-2">Product</th>
+                            <th className="pb-4 font-medium px-2">Direction</th>
+                            <th className="pb-4 font-medium px-2">Target Price</th>
+                            <th className="pb-4 font-medium px-2">Amount</th>
+                            <th className="pb-4 font-medium px-2">APR</th>
+                            <th className="pb-4 font-medium px-2">Status / Win</th>
+                        </tr>
+                    </thead>
+                    <tbody className="text-sm divide-y divide-slate-700/50">
+                        {transactions.slice(0, 10).map((tx, i) => (
+                            <tr key={i} className="hover:bg-slate-700/20 transition-colors group">
+                                <td className="py-4 px-2 font-medium text-slate-200">{tx.productName}</td>
+                                <td className="py-4 px-2">
+                                    <span className={`px-2.5 py-1 rounded-md text-xs font-semibold tracking-wide ${tx.orderDirection.includes('Buy') ? 'bg-cyan-500/10 text-cyan-400' : 'bg-fuchsia-500/10 text-fuchsia-400'}`}>
+                                        {tx.orderDirection}
+                                    </span>
+                                </td>
+                                <td className="py-4 px-2 font-mono text-slate-300 group-hover:text-white transition-colors">{tx.targetPrice}</td>
+                                <td className="py-4 px-2 font-mono text-slate-300">{tx.investmentAmount.toFixed(4)} <span className="text-xs text-slate-500">{tx.investmentToken}</span></td>
+                                <td className="py-4 px-2 font-mono text-emerald-400">{tx.apr.toFixed(2)}%</td>
+                                <td className="py-4 px-2">
+                                    {tx.status === 'Completed' ? (
+                                        <div className="flex items-center gap-2">
+                                            <ShieldCheck className="w-4 h-4 text-slate-400" />
+                                            <span className={`text-xs font-bold px-2.5 py-1 rounded-md tracking-wide ${tx.winOrLoss === 'Win' ? 'bg-emerald-500/20 text-emerald-400 shadow-[0_0_10px_rgba(16,185,129,0.15)]' : 'bg-slate-700 text-slate-300'}`}>
+                                                {tx.winOrLoss}
+                                            </span>
+                                        </div>
+                                    ) : (
+                                        <span className="text-amber-400 text-xs font-semibold bg-amber-400/10 px-2.5 py-1 rounded-md tracking-wide flex items-center gap-1 w-max">
+                                            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
+                                            Pending
+                                        </span>
+                                    )}
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+
+        </div>
+    );
+}
+
+const COLORS = ['#34d399', '#22d3ee', '#818cf8', '#a78bfa', '#f472b6'];
+
+function MetricCard({ title, value, icon, trend }: { title: string, value: string | number, icon: React.ReactNode, trend?: string }) {
+    return (
+        <div className="bg-slate-800/40 backdrop-blur-xl border border-slate-700/50 rounded-2xl p-6 shadow-xl relative overflow-hidden group hover:-translate-y-1 transition-transform duration-300">
+            <div className="absolute -right-6 -top-6 w-24 h-24 bg-white/5 rounded-full blur-2xl group-hover:bg-white/10 transition-colors duration-500"></div>
+            <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-medium text-slate-400">{title}</h3>
+                <div className="p-2 bg-slate-700/50 rounded-lg text-white shadow-inner">{icon}</div>
+            </div>
+            <div className="flex items-baseline gap-3">
+                <p className="text-3xl font-bold font-mono text-white tracking-tight drop-shadow-sm">{value}</p>
+                {trend && (
+                    <span className="text-xs font-bold text-emerald-400 bg-emerald-400/10 px-2 py-1 rounded-md flex items-center gap-0.5 shadow-sm">
+                        <ArrowUpRight className="w-3 h-3" /> {trend}
+                    </span>
+                )}
+            </div>
+        </div>
+    );
+}
