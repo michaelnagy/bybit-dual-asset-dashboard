@@ -170,43 +170,45 @@ function transformBybitApiData(data: any[], metadata: any[] = []): DualAssetTran
         });
     });
 
-    // Process redeems and match with stakes
-    data.filter(item => item.apiSource === 'earn' && item.orderType === 'Redeem').forEach(redeem => {
-        // Try to find a matching stake by amount and product
-        const matchingStake = data.find(item =>
-            item.apiSource === 'earn' &&
-            item.orderType === 'Stake' &&
-            item.coin === redeem.coin &&
-            item.orderValue === redeem.orderValue &&
-            Math.abs(new Date(parseInt(item.createdAt)).getTime() - new Date(parseInt(redeem.createdAt)).getTime()) < 2 * 24 * 60 * 60 * 1000 // within 2 days
-        );
+    // Process Earn Orders (Flexible Savings / Easy Earn Stakes)
+    data.filter(item => item.apiSource === 'earn' && item.orderType === 'Stake').forEach(stake => {
+        const product = productMap.get(stake.productId);
+        const orderTime = new Date(parseInt(stake.createdAt));
 
-        if (matchingStake) {
-            const orderTime = new Date(parseInt(matchingStake.createdAt));
-            const settlementTime = new Date(parseInt(redeem.createdAt));
-            const product = productMap.get(redeem.productId);
-
-            transactions.push({
-                productName: `${redeem.coin}-USDT`,
-                targetPrice: product ? parseFloat(product.strikePrice || product.targetPrice || 0) : 0,
-                investmentAmount: parseFloat(matchingStake.orderValue),
-                investmentToken: matchingStake.coin,
-                stakingPeriod: '< 1 Day',
-                settlementPrice: null,
-                orderTime,
-                orderDirection: 'Sell High', // Default guess for crypto stake
-                apr: product ? parseFloat(product.estimateApr || product.apr || 0) : 0,
-                settlementTime,
-                proceeds: parseFloat(redeem.orderValue),
-                proceedsToken: redeem.coin,
-                status: 'Completed',
-                orderId: redeem.orderId,
-                profitAmount: 0, // Needs yield data
-                profitToken: redeem.coin,
-                winOrLoss: 'Loss', // Redeemed in same token usually means target price not hit
-                realApr: null
-            });
+        let status = stake.status || 'Active';
+        if (status === 'Success' || status === 'SUCCESS' || status === 'Completed') {
+             status = 'Completed';
         }
+
+        let apr = 0;
+        if (product) {
+            const aprStr = product.estimateApr || product.apr || "0";
+            apr = typeof aprStr === 'string' && aprStr.includes('%') ? parseFloat(aprStr.replace('%', '')) : parseFloat(aprStr);
+            if (apr < 1) { // some APIs return 0.05 instead of 5%
+                apr = apr * 100;
+            }
+        }
+
+        transactions.push({
+            productName: stake.coin, // Keep it simple like the UI
+            targetPrice: 0,
+            investmentAmount: parseFloat(stake.orderValue),
+            investmentToken: stake.coin,
+            stakingPeriod: 'Flexible',
+            settlementPrice: null,
+            orderTime,
+            orderDirection: 'Buy Low', // Default for standard earn
+            apr,
+            settlementTime: orderTime, // Set settlement time as order time for historical sorting
+            proceeds: parseFloat(stake.orderValue),
+            proceedsToken: stake.coin,
+            status,
+            orderId: stake.orderId,
+            profitAmount: 0, // In easy earn, profit accumulates over time, we just show the transaction
+            profitToken: stake.coin,
+            winOrLoss: 'Win', // Always a win for easy earn conceptually, or could be null
+            realApr: null
+        });
     });
 
     // Handle Option Executions (Direct Dual Asset markers)
