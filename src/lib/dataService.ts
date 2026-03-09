@@ -114,7 +114,7 @@ export function transformMockData(): DualAssetTransaction[] {
 
 // Transform Bybit API v5 data to our standard format
 function transformBybitApiData(data: any[], metadata: any[] = []): DualAssetTransaction[] {
-    if (!data || data.length === 0) return transformMockData();
+    if (!data || data.length === 0) return [];
 
     const transactions: DualAssetTransaction[] = [];
     const productMap = new Map<string, any>();
@@ -242,7 +242,7 @@ function transformBybitApiData(data: any[], metadata: any[] = []): DualAssetTran
     });
 
     // If we couldn't find meaningful transactions, return mock for now to not break the UI
-    if (transactions.length === 0) return transformMockData();
+    if (transactions.length === 0) return [];
 
     // Final pass for calculated fields
     return transactions.map(item => {
@@ -294,22 +294,16 @@ function transformBybitApiData(data: any[], metadata: any[] = []): DualAssetTran
 }
 
 export async function fetchDualAssetTransactions(): Promise<DualAssetTransaction[]> {
-    try {
-        const res = await fetch('/api/bybit/earn');
-        const json: any = await res.json();
+    const res = await fetch('/api/bybit/earn');
+    const json = await res.json();
 
-        if (json.mockFallback) {
-            console.warn("Using mock fallback data due to API error/fallback:", json.error);
-            return transformMockData();
-        }
-
-        if (json.data && json.data.list) {
-            return transformBybitApiData(json.data.list, json.data.metadata || []);
-        }
-
-        return transformMockData();
-    } catch (error) {
-        console.error("Failed to fetch from API", error);
-        return transformMockData();
+    if (!res.ok) {
+        throw new Error(json.error || 'Failed to fetch data from Bybit API');
     }
+
+    if (json.data && json.data.list) {
+        return transformBybitApiData(json.data.list, json.data.metadata || []);
+    }
+
+    return [];
 }
