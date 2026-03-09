@@ -109,6 +109,6 @@ export async function GET(request: Request) {
     return NextResponse.json({ data: { list: allOrders, metadata: productMetadata } });
   } catch (error: any) {
     console.error('Bybit API Error:', error);
-    return NextResponse.json({ error: error.message || 'API Error', mockFallback: true }, { status: 200 });
+    return NextResponse.json({ error: 'Internal Server Error', mockFallback: true }, { status: 200 });
   }
 }
