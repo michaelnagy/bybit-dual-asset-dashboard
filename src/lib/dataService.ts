@@ -112,7 +112,7 @@ function transformMockData(): DualAssetTransaction[] {
 }
 
 // Transform Bybit API v5 data to our standard format
-function transformBybitApiData(data: any[], metadata: any[] = []): DualAssetTransaction[] {
+export function transformBybitApiData(data: any[], metadata: any[] = []): DualAssetTransaction[] {
     if (!data || data.length === 0) return transformMockData();
 
     const transactions: DualAssetTransaction[] = [];
