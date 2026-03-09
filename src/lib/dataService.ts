@@ -45,7 +45,22 @@ function transformMockData(): DualAssetTransaction[] {
                 winOrLoss = 'Loss'; // Did not hit target price
             } else {
                 // Converted! Win!
-                profitAmount = item.pr; // Simplification: Total proceeds in new token
+                // To get pure premium in the converted token, we need the initial investment 
+                // in terms of the converted token to subtract from total proceeds.
+                // Or mathematically, the pure profit is simply total proceeds minus the 
+                // principal converted at the target price.
+
+                let principalInConvertedToken = 0;
+
+                if (item.od === 'Sell High') {
+                    // Investment was crypto (e.g. SOL), returned in stable (e.g. USDT)
+                    principalInConvertedToken = item.ia * item.tp;
+                } else if (item.od === 'Buy Low') {
+                    // Investment was stable (e.g. USDT), returned in crypto (e.g. SOL)
+                    principalInConvertedToken = item.ia / item.tp;
+                }
+
+                profitAmount = item.pr - principalInConvertedToken;
                 profitToken = item.prt;
                 winOrLoss = 'Win';
             }

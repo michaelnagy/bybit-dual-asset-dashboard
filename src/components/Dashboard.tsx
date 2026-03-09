@@ -31,7 +31,12 @@ export default function Dashboard() {
         let totalProfitUsdt = 0;
         const tokenProfits: Record<string, number> = {};
         const winLoss = { wins: 0, losses: 0, totalCompleted: 0 };
-        let sumTargetPriceObj: Record<string, { sum: number, count: number }> = {};
+        let vwapTargetPriceObj: Record<string, {
+            buyLowWeightedSum: number,
+            buyLowVolume: number,
+            sellHighWeightedSum: number,
+            sellHighVolume: number,
+        }> = {};
         const capitalAllocation: Record<string, number> = {};
 
         // Sort transactions by date ascending for line charts
@@ -41,10 +46,19 @@ export default function Dashboard() {
         let cumulativeUsdtProfit = 0;
 
         sortedTimeline.forEach(tx => {
-            // Target Avg Price tracking
-            if (!sumTargetPriceObj[tx.productName]) sumTargetPriceObj[tx.productName] = { sum: 0, count: 0 };
-            sumTargetPriceObj[tx.productName].sum += tx.targetPrice;
-            sumTargetPriceObj[tx.productName].count += 1;
+            // Volume Weighted Average Cost Basis tracking
+            if (!vwapTargetPriceObj[tx.productName]) vwapTargetPriceObj[tx.productName] = {
+                buyLowWeightedSum: 0, buyLowVolume: 0,
+                sellHighWeightedSum: 0, sellHighVolume: 0
+            };
+
+            if (tx.orderDirection === 'Buy Low') {
+                vwapTargetPriceObj[tx.productName].buyLowWeightedSum += tx.targetPrice * tx.investmentAmount;
+                vwapTargetPriceObj[tx.productName].buyLowVolume += tx.investmentAmount;
+            } else if (tx.orderDirection === 'Sell High') {
+                vwapTargetPriceObj[tx.productName].sellHighWeightedSum += tx.targetPrice * tx.investmentAmount;
+                vwapTargetPriceObj[tx.productName].sellHighVolume += tx.investmentAmount;
+            }
 
             // Capital Allocation (Simplistically using token as proxy for value, ideally we'd normalize to USDT)
             if (!capitalAllocation[tx.investmentToken]) capitalAllocation[tx.investmentToken] = 0;
@@ -76,10 +90,14 @@ export default function Dashboard() {
             }
         });
 
-        const avgTargetPrices = Object.keys(sumTargetPriceObj).map(prod => ({
-            product: prod,
-            avgPrice: sumTargetPriceObj[prod].sum / sumTargetPriceObj[prod].count
-        }));
+        const avgTargetPrices = Object.keys(vwapTargetPriceObj).map(prod => {
+            const data = vwapTargetPriceObj[prod];
+            return {
+                product: prod,
+                buyLowVwap: data.buyLowVolume > 0 ? data.buyLowWeightedSum / data.buyLowVolume : 0,
+                sellHighVwap: data.sellHighVolume > 0 ? data.sellHighWeightedSum / data.sellHighVolume : 0,
+            };
+        });
 
         const winRatio = winLoss.totalCompleted > 0 ? (winLoss.wins / winLoss.totalCompleted) * 100 : 0;
 
@@ -131,15 +149,26 @@ export default function Dashboard() {
                 <div className="col-span-1 lg:col-span-2 bg-slate-800/40 backdrop-blur-xl border border-slate-700/50 rounded-2xl p-6 shadow-xl relative overflow-hidden group">
                     <div className="absolute w-64 h-64 bg-cyan-500/5 blur-3xl rounded-full -top-10 -right-10 pointer-events-none"></div>
                     <h3 className="text-sm font-medium text-slate-400 mb-4 flex items-center gap-2">
-                        <Activity className="w-4 h-4" /> Average Target Prices (Strike)
+                        <Activity className="w-4 h-4" /> Volume Weighted Avg Price (Cost Basis)
                     </h3>
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {summary?.avgTargetPrices.map(tp => (
-                            <div key={tp.product} className="bg-slate-900/40 p-3 rounded-xl border border-slate-700/30">
-                                <p className="text-xs text-slate-500 mb-1">{tp.product}</p>
-                                <p className="text-xl font-bold font-mono tracking-tight text-slate-100">
-                                    {tp.avgPrice.toFixed(4)}
-                                </p>
+                            <div key={tp.product} className="bg-slate-900/40 p-3 rounded-xl border border-slate-700/30 flex flex-col gap-2 relative">
+                                <p className="text-xs font-semibold text-slate-300 border-b border-slate-700/50 pb-1.5">{tp.product}</p>
+                                <div className="grid grid-cols-2 gap-2 mt-1">
+                                    <div>
+                                        <p className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Buy Low</p>
+                                        <p className="text-xl font-bold font-mono tracking-tight text-emerald-400">
+                                            {tp.buyLowVwap > 0 ? tp.buyLowVwap.toFixed(4) : '-'}
+                                        </p>
+                                    </div>
+                                    <div>
+                                        <p className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Sell High</p>
+                                        <p className="text-xl font-bold font-mono tracking-tight text-fuchsia-400">
+                                            {tp.sellHighVwap > 0 ? tp.sellHighVwap.toFixed(4) : '-'}
+                                        </p>
+                                    </div>
+                                </div>
                             </div>
                         ))}
                     </div>
@@ -220,6 +249,8 @@ export default function Dashboard() {
                             <th className="pb-4 font-medium px-2">Target Price</th>
                             <th className="pb-4 font-medium px-2">Amount</th>
                             <th className="pb-4 font-medium px-2">APR</th>
+                            <th className="pb-4 font-medium px-2">Earned (Token)</th>
+                            <th className="pb-4 font-medium px-2">Earned (USDT)</th>
                             <th className="pb-4 font-medium px-2">Status / Win</th>
                         </tr>
                     </thead>
@@ -235,6 +266,20 @@ export default function Dashboard() {
                                 <td className="py-4 px-2 font-mono text-slate-300 group-hover:text-white transition-colors">{tx.targetPrice}</td>
                                 <td className="py-4 px-2 font-mono text-slate-300">{tx.investmentAmount.toFixed(4)} <span className="text-xs text-slate-500">{tx.investmentToken}</span></td>
                                 <td className="py-4 px-2 font-mono text-emerald-400">{tx.apr.toFixed(2)}%</td>
+                                <td className="py-4 px-2 font-mono text-slate-300">
+                                    {tx.status === 'Completed' && tx.profitAmount !== null ? (
+                                        <>
+                                            {tx.profitAmount > 0 ? '+' : ''}{tx.profitAmount.toFixed(4)} <span className="text-xs text-slate-500">{tx.profitToken}</span>
+                                        </>
+                                    ) : '-'}
+                                </td>
+                                <td className="py-4 px-2 font-mono text-slate-300">
+                                    {tx.status === 'Completed' && tx.profitAmount !== null && tx.profitToken !== 'USDT' && tx.settlementPrice ? (
+                                        <span className="text-xs text-slate-400">≈ ${(tx.profitAmount * tx.settlementPrice).toFixed(2)}</span>
+                                    ) : tx.status === 'Completed' && tx.profitToken === 'USDT' ? (
+                                        <span className="text-xs text-slate-400">≈ ${(tx.profitAmount || 0).toFixed(2)}</span>
+                                    ) : '-'}
+                                </td>
                                 <td className="py-4 px-2">
                                     {tx.status === 'Completed' ? (
                                         <div className="flex items-center gap-2">
