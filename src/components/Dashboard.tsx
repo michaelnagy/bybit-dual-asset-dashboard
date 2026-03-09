@@ -5,9 +5,9 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { fetchDualAssetTransactions, DualAssetTransaction } from '@/lib/dataService';
 import {
     LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
-    PieChart, Pie, Cell, BarChart, Bar
+    PieChart, Pie, Cell
 } from 'recharts';
-import { ArrowUpRight, ArrowDownRight, Activity, PieChart as PieChartIcon, TrendingUp, DollarSign, Target, Clock, ShieldCheck, CheckCircle2 } from 'lucide-react';
+import { ArrowUpRight, Activity, PieChart as PieChartIcon, TrendingUp, DollarSign, Target, Clock, ShieldCheck } from 'lucide-react';
 
 export default function Dashboard() {
     const [transactions, setTransactions] = useState<DualAssetTransaction[]>([]);
