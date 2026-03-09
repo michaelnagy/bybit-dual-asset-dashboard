@@ -21,15 +21,21 @@ export async function GET(request: Request) {
     let allOrders: any[] = [];
 
     // 1. Try checking the standard Earn Order History
-    for (const cat of categoriesToTry) {
-      console.log(`Fetching Bybit Earn history for category: ${cat}`);
-      const response: any = await client.getEarnOrderHistory({ category: cat, limit: 100 });
-
-      if (response && response.retCode === 0 && response.result.list) {
-        const itemsWithCat = response.result.list.map((item: any) => ({ ...item, apiCategory: cat, apiSource: 'earn' }));
-        allOrders = [...allOrders, ...itemsWithCat];
+    console.log(`Fetching Bybit Earn history for categories: ${categoriesToTry.join(', ')}`);
+    const orderPromises = categoriesToTry.map(async (cat) => {
+      try {
+        const response: any = await client.getEarnOrderHistory({ category: cat, limit: 100 });
+        if (response && response.retCode === 0 && response.result.list) {
+          return response.result.list.map((item: any) => ({ ...item, apiCategory: cat, apiSource: 'earn' }));
+        }
+      } catch (e) {
+        console.warn(`Failed to fetch earn history for ${cat}:`, e);
       }
-    }
+      return [];
+    });
+
+    const orderResults = await Promise.all(orderPromises);
+    allOrders = [...allOrders, ...orderResults.flat()];
 
     // 2. Try checking Structured Investment records (for Dual Asset details)
     try {
@@ -59,14 +65,20 @@ export async function GET(request: Request) {
     // 4. Try checking Yield History (to find profits/APR)
     try {
       console.log('Fetching Bybit Earn yield history...');
-      for (const cat of ['FlexibleSaving', 'OnChain']) {
-        const yieldRes: any = await client.get('/v5/earn/yield', { category: cat, limit: 100 });
-        if (yieldRes && yieldRes.retCode === 0 && yieldRes.result) {
-          const yieldList = yieldRes.result.list || yieldRes.result.yield || [];
-          const items = yieldList.map((item: any) => ({ ...item, apiSource: 'yield', apiCategory: cat }));
-          allOrders = [...allOrders, ...items];
+      const yieldPromises = ['FlexibleSaving', 'OnChain'].map(async (cat) => {
+        try {
+          const yieldRes: any = await client.get('/v5/earn/yield', { category: cat, limit: 100 });
+          if (yieldRes && yieldRes.retCode === 0 && yieldRes.result) {
+            const yieldList = yieldRes.result.list || yieldRes.result.yield || [];
+            return yieldList.map((item: any) => ({ ...item, apiSource: 'yield', apiCategory: cat }));
+          }
+        } catch (e) {
+          console.warn(`Failed to fetch yield history for ${cat}:`, e);
         }
-      }
+        return [];
+      });
+      const yieldResults = await Promise.all(yieldPromises);
+      allOrders = [...allOrders, ...yieldResults.flat()];
     } catch (e) {
       console.warn('Failed to fetch yield history:', e);
     }
@@ -74,13 +86,19 @@ export async function GET(request: Request) {
     // 5. Try checking Staked Positions (for active orders)
     try {
       console.log('Fetching Bybit Earn positions...');
-      for (const cat of ['FlexibleSaving', 'OnChain']) {
-        const posRes: any = await client.get('/v5/earn/position', { category: cat });
-        if (posRes && posRes.retCode === 0 && posRes.result.list) {
-          const items = posRes.result.list.map((item: any) => ({ ...item, apiSource: 'position', apiCategory: cat }));
-          allOrders = [...allOrders, ...items];
+      const posPromises = ['FlexibleSaving', 'OnChain'].map(async (cat) => {
+        try {
+          const posRes: any = await client.get('/v5/earn/position', { category: cat });
+          if (posRes && posRes.retCode === 0 && posRes.result.list) {
+            return posRes.result.list.map((item: any) => ({ ...item, apiSource: 'position', apiCategory: cat }));
+          }
+        } catch (e) {
+          console.warn(`Failed to fetch earn positions for ${cat}:`, e);
         }
-      }
+        return [];
+      });
+      const posResults = await Promise.all(posPromises);
+      allOrders = [...allOrders, ...posResults.flat()];
     } catch (e) {
       console.warn('Failed to fetch earn positions:', e);
     }
@@ -90,13 +108,20 @@ export async function GET(request: Request) {
     let productMetadata: any[] = [];
     if (productIds.length > 0) {
       try {
-        console.log(`Fetching Bybit Product info for IDs: ${productIds.join(', ')}`);
-        for (const cat of ['FlexibleSaving', 'OnChain']) {
-          const prodRes: any = await client.getEarnProduct({ category: cat as any });
-          if (prodRes && prodRes.retCode === 0 && prodRes.result.list) {
-            productMetadata = [...productMetadata, ...prodRes.result.list];
+        console.log(`Fetching Bybit Product info for categories in parallel...`);
+        const prodPromises = ['FlexibleSaving', 'OnChain'].map(async (cat) => {
+          try {
+            const prodRes: any = await client.getEarnProduct({ category: cat as any });
+            if (prodRes && prodRes.retCode === 0 && prodRes.result.list) {
+              return prodRes.result.list;
+            }
+          } catch (e) {
+            console.warn(`Failed to fetch product metadata for ${cat}:`, e);
           }
-        }
+          return [];
+        });
+        const prodResults = await Promise.all(prodPromises);
+        productMetadata = prodResults.flat();
       } catch (e) {
         console.warn('Failed to fetch product metadata:', e);
       }
