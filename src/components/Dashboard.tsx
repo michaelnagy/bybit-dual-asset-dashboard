@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 'use client';
 
 import React, { useEffect, useState, useMemo } from 'react';
@@ -42,7 +43,7 @@ export default function Dashboard() {
         let totalProfitUsdt = 0;
         const tokenProfits: Record<string, number> = {};
         const winLoss = { wins: 0, losses: 0, totalCompleted: 0 };
-        let vwapTargetPriceObj: Record<string, {
+        const vwapTargetPriceObj: Record<string, {
             buyLowWeightedSum: number,
             buyLowVolume: number,
             sellHighWeightedSum: number,
