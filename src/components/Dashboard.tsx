@@ -24,6 +24,15 @@ export default function Dashboard() {
         loadData();
     }, []);
 
+    // Live Expiration Timer
+    const [now, setNow] = useState(new Date());
+    useEffect(() => {
+        if (!loading) {
+            const interval = setInterval(() => setNow(new Date()), 1000);
+            return () => clearInterval(interval);
+        }
+    }, [loading]);
+
     // Compute metrics
     const summary = useMemo(() => {
         if (!transactions.length) return null;
@@ -289,10 +298,15 @@ export default function Dashboard() {
                                             </span>
                                         </div>
                                     ) : (
-                                        <span className="text-amber-400 text-xs font-semibold bg-amber-400/10 px-2.5 py-1 rounded-md tracking-wide flex items-center gap-1 w-max">
-                                            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
-                                            Pending
-                                        </span>
+                                        <div className="flex flex-col gap-1 items-start">
+                                            <span className="text-amber-400 text-xs font-semibold bg-amber-400/10 px-2.5 py-1 rounded-md tracking-wide flex items-center gap-1 w-max">
+                                                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
+                                                Pending
+                                            </span>
+                                            <span className="text-[10px] text-slate-400 font-mono">
+                                                {getRemainingTime(tx.settlementTime, now)}
+                                            </span>
+                                        </div>
                                     )}
                                 </td>
                             </tr>
@@ -325,4 +339,15 @@ function MetricCard({ title, value, icon, trend }: { title: string, value: strin
             </div>
         </div>
     );
+}
+
+function getRemainingTime(settlementTime: Date, now: Date): string {
+    const diff = settlementTime.getTime() - now.getTime();
+    if (diff <= 0) return 'Settling...';
+
+    const hours = Math.floor(diff / (1000 * 60 * 60));
+    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+    const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+
+    return `${hours}h ${minutes}m ${seconds}s left`;
 }
