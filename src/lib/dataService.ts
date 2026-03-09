@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 export interface DualAssetTransaction {
     productName: string;
     targetPrice: number;
@@ -31,7 +32,7 @@ const MOCK_DATA_RAW = [
     { p: 'SOL-USDT', tp: 85.0, ia: 30.0, iat: 'USDT', sp: '1 Day', sep: 84.2205, ot: '2026-03-06T03:55:32Z', od: 'Buy Low', apr: 1.7810, st: '2026-03-07T07:59:59Z', pr: 0.35466338, prt: 'SOL', stat: 'Completed', id: 'f4db1613' },
 ];
 
-function transformMockData(): DualAssetTransaction[] {
+export function transformMockData(): DualAssetTransaction[] {
     return MOCK_DATA_RAW.map(item => {
         // Calculate Profit
         let profitAmount = null;
@@ -113,11 +114,61 @@ function transformMockData(): DualAssetTransaction[] {
 
 // Transform Bybit API v5 data to our standard format
 function transformBybitApiData(data: any[], metadata: any[] = []): DualAssetTransaction[] {
-    if (!data || data.length === 0) return transformMockData();
+    if (!data || data.length === 0) return [];
 
     const transactions: DualAssetTransaction[] = [];
     const productMap = new Map<string, any>();
     metadata.forEach(p => productMap.set(p.productId, p));
+
+
+    // Process Structured Investment Records (Dual Asset)
+    data.filter(item => item.apiSource === 'investment').forEach(invest => {
+        const productName = invest.productName || (invest.coin + '-USDT');
+        const targetPrice = parseFloat(invest.targetPrice || invest.strikePrice || 0);
+        const investmentAmount = parseFloat(invest.amount || invest.orderValue || invest.investAmount || 0);
+        const investmentToken = invest.coin || invest.investCoin || invest.investToken || productName.split('-')[0];
+        const stakingPeriod = invest.period || invest.stakingPeriod || '< 1 Day';
+        const settlementPrice = invest.settlementPrice ? parseFloat(invest.settlementPrice) : null;
+        const orderTime = invest.createdAt ? new Date(parseInt(invest.createdAt)) : (invest.orderTime ? new Date(invest.orderTime) : new Date());
+
+        let orderDirection = invest.direction || invest.orderType || 'Buy Low';
+        if (orderDirection === 'BuyLow') orderDirection = 'Buy Low';
+        if (orderDirection === 'SellHigh') orderDirection = 'Sell High';
+
+        const aprStr = invest.apr || invest.yield || invest.estimateApr || "0";
+        const apr = typeof aprStr === 'string' && aprStr.includes('%') ? parseFloat(aprStr.replace('%', '')) : parseFloat(aprStr);
+
+        const settlementTime = invest.settlementTime ? new Date(parseInt(invest.settlementTime)) : (invest.settleTime ? new Date(parseInt(invest.settleTime)) : new Date());
+
+        const proceeds = invest.proceeds || invest.payoff || invest.settlementAmount;
+        const proceedsAmount = proceeds ? parseFloat(proceeds) : null;
+        const proceedsToken = invest.proceedsCoin || invest.payoffCoin || invest.settlementCoin || null;
+
+        let status = invest.status || 'Active';
+        if (status === 'SUCCESS' || status === 'SETTLED' || status === 'Completed' || status === 'Settled') status = 'Completed';
+        else status = 'Active';
+
+        transactions.push({
+            productName,
+            targetPrice,
+            investmentAmount,
+            investmentToken,
+            stakingPeriod,
+            settlementPrice,
+            orderTime,
+            orderDirection: orderDirection as any,
+            apr,
+            settlementTime,
+            proceeds: proceedsAmount,
+            proceedsToken,
+            status,
+            orderId: invest.orderId || invest.id || Math.random().toString(),
+            profitAmount: null,
+            profitToken: proceedsToken,
+            winOrLoss: null,
+            realApr: null
+        });
+    });
 
     // Process redeems and match with stakes
     data.filter(item => item.apiSource === 'earn' && item.orderType === 'Redeem').forEach(redeem => {
@@ -191,43 +242,68 @@ function transformBybitApiData(data: any[], metadata: any[] = []): DualAssetTran
     });
 
     // If we couldn't find meaningful transactions, return mock for now to not break the UI
-    if (transactions.length === 0) return transformMockData();
+    if (transactions.length === 0) return [];
 
     // Final pass for calculated fields
     return transactions.map(item => {
-        let realApr = null;
-        if (item.status === 'Completed' && item.profitAmount !== null) {
-            const durationMs = item.settlementTime.getTime() - item.orderTime.getTime();
-            const durationDays = durationMs / (1000 * 60 * 60 * 24);
-            if (durationDays > 0 && item.investmentAmount > 0) {
-                // Approximate principle in profit token if converted
-                const principal = item.investmentToken === item.profitToken ? item.investmentAmount : item.investmentAmount * item.targetPrice;
-                if (principal > 0) {
-                    realApr = (item.profitAmount / principal) * (365 / durationDays) * 100;
+        let profitAmount = item.profitAmount;
+        let profitToken = item.profitToken;
+        let winOrLoss = item.winOrLoss;
+        let realApr = item.realApr;
+
+        if (item.status === 'Completed' && item.proceeds !== null && item.proceedsToken !== null && profitAmount === null) {
+            if (item.proceedsToken === item.investmentToken) {
+                profitAmount = item.proceeds - item.investmentAmount;
+                profitToken = item.investmentToken;
+                winOrLoss = 'Loss';
+            } else {
+                let principalInConvertedToken = 0;
+                if (item.orderDirection === 'Sell High') {
+                    principalInConvertedToken = item.investmentAmount * item.targetPrice;
+                } else if (item.orderDirection === 'Buy Low') {
+                    principalInConvertedToken = item.investmentAmount / item.targetPrice;
                 }
+                profitAmount = item.proceeds - principalInConvertedToken;
+                profitToken = item.proceedsToken;
+                winOrLoss = 'Win';
             }
         }
-        return { ...item, realApr };
+
+        if (item.status === 'Completed' && item.proceeds !== null && profitAmount !== null && item.proceedsToken !== null && realApr === null) {
+            const durationMs = item.settlementTime.getTime() - item.orderTime.getTime();
+            const durationDays = durationMs / (1000 * 60 * 60 * 24);
+
+            let principalForApr = 0;
+            if (item.proceedsToken === item.investmentToken) {
+                principalForApr = item.investmentAmount;
+            } else {
+                if (item.orderDirection === 'Sell High') {
+                    principalForApr = item.investmentAmount * item.targetPrice;
+                } else if (item.orderDirection === 'Buy Low') {
+                    principalForApr = item.investmentAmount / item.targetPrice;
+                }
+            }
+
+            if (principalForApr > 0 && durationDays > 0) {
+                realApr = (profitAmount / principalForApr) * (365 / durationDays) * 100;
+            }
+        }
+
+        return { ...item, profitAmount, profitToken, winOrLoss, realApr };
     });
 }
 
 export async function fetchDualAssetTransactions(): Promise<DualAssetTransaction[]> {
-    try {
-        const res = await fetch('/api/bybit/earn');
-        const json = await res.json();
+    const res = await fetch('/api/bybit/earn');
+    const json = await res.json();
 
-        if (json.mockFallback) {
-            console.warn("Using mock fallback data due to API error/fallback:", json.error);
-            return transformMockData();
-        }
-
-        if (json.data && json.data.list) {
-            return transformBybitApiData(json.data.list, json.data.metadata || []);
-        }
-
-        return transformMockData();
-    } catch (error) {
-        console.error("Failed to fetch from API", error);
-        return transformMockData();
+    if (!res.ok) {
+        throw new Error(json.error || 'Failed to fetch data from Bybit API');
     }
+
+    if (json.data && json.data.list) {
+        return transformBybitApiData(json.data.list, json.data.metadata || []);
+    }
+
+    return [];
 }

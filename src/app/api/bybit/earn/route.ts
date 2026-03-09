@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextResponse } from 'next/server';
 import { RestClientV5 } from 'bybit-api';
 
@@ -6,7 +7,7 @@ export async function GET(request: Request) {
   const category = searchParams.get('category') || 'Earn';
 
   if (!process.env.BYBIT_API_KEY || !process.env.BYBIT_API_SECRET) {
-    return NextResponse.json({ error: 'Missing Bybit API Keys in environment variables.', mockFallback: true }, { status: 200 });
+    return NextResponse.json({ error: 'Missing Bybit API Keys in environment variables.' }, { status: 401 });
   }
 
   const client = new RestClientV5({
@@ -128,12 +129,12 @@ export async function GET(request: Request) {
     }
 
     if (allOrders.length === 0) {
-      return NextResponse.json({ error: 'No orders found in checked categories or records.', mockFallback: true }, { status: 200 });
+      return NextResponse.json({ error: 'No orders found in checked categories or records.' }, { status: 404 });
     }
 
     return NextResponse.json({ data: { list: allOrders, metadata: productMetadata } });
   } catch (error: any) {
     console.error('Bybit API Error:', error);
-    return NextResponse.json({ error: error.message || 'API Error', mockFallback: true }, { status: 200 });
+    return NextResponse.json({ error: error.message || 'API Error' }, { status: 500 });
   }
 }

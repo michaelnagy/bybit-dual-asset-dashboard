@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 'use client';
 
 import React, { useEffect, useState, useMemo } from 'react';
@@ -11,6 +12,7 @@ import { ArrowUpRight, ArrowDownRight, Activity, PieChart as PieChartIcon, Trend
 export default function Dashboard() {
     const [transactions, setTransactions] = useState<DualAssetTransaction[]>([]);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
     const [mounted, setMounted] = useState(false);
 
     useEffect(() => {
@@ -19,6 +21,8 @@ export default function Dashboard() {
             try {
                 const data = await fetchDualAssetTransactions();
                 setTransactions(data);
+            } catch (err: any) {
+                setError(err.message || 'An error occurred while fetching data');
             } finally {
                 setLoading(false);
             }
@@ -42,7 +46,7 @@ export default function Dashboard() {
         let totalProfitUsdt = 0;
         const tokenProfits: Record<string, number> = {};
         const winLoss = { wins: 0, losses: 0, totalCompleted: 0 };
-        let vwapTargetPriceObj: Record<string, {
+        const vwapTargetPriceObj: Record<string, {
             buyLowWeightedSum: number,
             buyLowVolume: number,
             sellHighWeightedSum: number,
@@ -126,6 +130,24 @@ export default function Dashboard() {
             allocationPieData
         };
     }, [transactions]);
+
+    if (error) return (
+        <div className="flex flex-col items-center justify-center min-h-screen bg-slate-950 text-white p-6">
+            <div className="bg-red-500/10 border border-red-500/50 rounded-2xl p-8 max-w-md w-full text-center shadow-2xl backdrop-blur-md">
+                <div className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
+                    <span className="text-3xl">⚠️</span>
+                </div>
+                <h2 className="text-2xl font-bold text-red-400 mb-4">Dashboard Error</h2>
+                <p className="text-slate-300 mb-8 whitespace-pre-wrap">{error}</p>
+                <button
+                    onClick={() => window.location.reload()}
+                    className="px-6 py-3 bg-red-500 hover:bg-red-600 text-white rounded-xl font-medium transition-colors shadow-lg shadow-red-500/25"
+                >
+                    Retry Connection
+                </button>
+            </div>
+        </div>
+    );
 
     if (loading) return (
         <div className="flex items-center justify-center min-h-screen bg-slate-950 text-white">
