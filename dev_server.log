@@ -1,0 +1,20 @@
+
+> bybit-dual-asset-dashboard@0.1.0 dev
+> next dev -p 3005
+
+▲ Next.js 16.1.6 (Turbopack)
+- Local:         http://localhost:3005
+- Network:       http://192.168.0.2:3005
+
+✓ Starting...
+Attention: Next.js now collects completely anonymous telemetry regarding usage.
+This information is used to shape Next.js' roadmap and prioritize features.
+You can learn more, including how to opt-out if you'd not like to participate in this anonymous program, by visiting the following URL:
+https://nextjs.org/telemetry
+
+✓ Ready in 1604ms
+○ Compiling / ...
+ GET / 200 in 8.4s (compile: 7.8s, render: 646ms)
+ GET /api/bybit/earn 401 in 1631ms (compile: 1574ms, render: 57ms)
+ GET / 200 in 77ms (compile: 5ms, render: 73ms)
+ GET /api/bybit/earn 401 in 14ms (compile: 8ms, render: 6ms)
