@@ -11,8 +11,10 @@ import { ArrowUpRight, ArrowDownRight, Activity, PieChart as PieChartIcon, Trend
 export default function Dashboard() {
     const [transactions, setTransactions] = useState<DualAssetTransaction[]>([]);
     const [loading, setLoading] = useState(true);
+    const [mounted, setMounted] = useState(false);
 
     useEffect(() => {
+        setMounted(true);
         async function loadData() {
             try {
                 const data = await fetchDualAssetTransactions();
@@ -90,7 +92,7 @@ export default function Dashboard() {
                 // Timeline Chart Builder
                 if (token === 'USDT') cumulativeUsdtProfit += profit;
                 timelineData.push({
-                    date: tx.settlementTime.toLocaleDateString(),
+                    date: mounted ? tx.settlementTime.toLocaleDateString() : '',
                     name: tx.productName,
                     profit: profit,
                     token: token,
@@ -257,7 +259,7 @@ export default function Dashboard() {
                             <th className="pb-4 font-medium px-2">Direction</th>
                             <th className="pb-4 font-medium px-2">Target Price</th>
                             <th className="pb-4 font-medium px-2">Amount</th>
-                            <th className="pb-4 font-medium px-2">APR</th>
+                            <th className="pb-4 font-medium px-2">APR (Promised/Real)</th>
                             <th className="pb-4 font-medium px-2">Earned (Token)</th>
                             <th className="pb-4 font-medium px-2">Earned (USDT)</th>
                             <th className="pb-4 font-medium px-2">Status / Win</th>
@@ -274,7 +276,16 @@ export default function Dashboard() {
                                 </td>
                                 <td className="py-4 px-2 font-mono text-slate-300 group-hover:text-white transition-colors">{tx.targetPrice}</td>
                                 <td className="py-4 px-2 font-mono text-slate-300">{tx.investmentAmount.toFixed(4)} <span className="text-xs text-slate-500">{tx.investmentToken}</span></td>
-                                <td className="py-4 px-2 font-mono text-emerald-400">{tx.apr.toFixed(2)}%</td>
+                                <td className="py-4 px-2 font-mono">
+                                    <div className="flex flex-col gap-0.5">
+                                        <span className="text-slate-300" title="Promised APR">{tx.apr.toFixed(2)}%</span>
+                                        {tx.realApr !== null && tx.realApr !== undefined && (
+                                            <span className={`text-xs ${tx.realApr >= tx.apr ? 'text-emerald-400' : 'text-amber-400'}`} title="Real APR">
+                                                {tx.realApr.toFixed(2)}%
+                                            </span>
+                                        )}
+                                    </div>
+                                </td>
                                 <td className="py-4 px-2 font-mono text-slate-300">
                                     {tx.status === 'Completed' && tx.profitAmount !== null ? (
                                         <>
@@ -304,7 +315,7 @@ export default function Dashboard() {
                                                 Pending
                                             </span>
                                             <span className="text-[10px] text-slate-400 font-mono">
-                                                {getRemainingTime(tx.settlementTime, now)}
+                                                {mounted ? getRemainingTime(tx.settlementTime, now) : 'Loading...'}
                                             </span>
                                         </div>
                                     )}

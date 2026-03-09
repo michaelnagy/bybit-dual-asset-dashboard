@@ -18,6 +18,7 @@ export interface DualAssetTransaction {
     profitAmount: number | null;
     profitToken: string | null;
     winOrLoss: 'Win' | 'Loss' | 'Pending' | null; // Win = converted to target currency
+    realApr: number | null; // Annualized Percentage Rate based on actual duration and profit
 }
 
 // Mock data provided by user
@@ -66,6 +67,27 @@ function transformMockData(): DualAssetTransaction[] {
             }
         }
 
+        let realApr = null;
+        if (item.stat === 'Completed' && item.pr !== null && profitAmount !== null && item.prt !== null) {
+            const durationMs = new Date(item.st).getTime() - new Date(item.ot).getTime();
+            const durationDays = durationMs / (1000 * 60 * 60 * 24);
+
+            let principalForApr = 0;
+            if (item.prt === item.iat) {
+                principalForApr = item.ia;
+            } else {
+                if (item.od === 'Sell High') {
+                    principalForApr = item.ia * item.tp;
+                } else if (item.od === 'Buy Low') {
+                    principalForApr = item.ia / item.tp;
+                }
+            }
+
+            if (principalForApr > 0 && durationDays > 0) {
+                realApr = (profitAmount / principalForApr) * (365 / durationDays) * 100;
+            }
+        }
+
         return {
             productName: item.p,
             targetPrice: item.tp,
@@ -84,17 +106,109 @@ function transformMockData(): DualAssetTransaction[] {
             profitAmount,
             profitToken,
             winOrLoss: winOrLoss as any,
+            realApr,
         };
     });
 }
 
-// Transform Bybit API v5 EARN Order History to our standard format
-function transformBybitApiData(data: any[]): DualAssetTransaction[] {
-    // We don't have exact fields for Earn Dual Asset from Bybit SDK response at hand right now,
-    // This is a placeholder for real mapping when connected.
-    // In production with real keys, you'll map the exact Bybit Earn API response `list` here.
-    console.warn("Bybit API transforming: assuming similar payload structure or fallback to mock.");
-    return transformMockData(); // fallback temporarily
+// Transform Bybit API v5 data to our standard format
+function transformBybitApiData(data: any[], metadata: any[] = []): DualAssetTransaction[] {
+    if (!data || data.length === 0) return transformMockData();
+
+    const transactions: DualAssetTransaction[] = [];
+    const productMap = new Map<string, any>();
+    metadata.forEach(p => productMap.set(p.productId, p));
+
+    // Process redeems and match with stakes
+    data.filter(item => item.apiSource === 'earn' && item.orderType === 'Redeem').forEach(redeem => {
+        // Try to find a matching stake by amount and product
+        const matchingStake = data.find(item =>
+            item.apiSource === 'earn' &&
+            item.orderType === 'Stake' &&
+            item.coin === redeem.coin &&
+            item.orderValue === redeem.orderValue &&
+            Math.abs(new Date(parseInt(item.createdAt)).getTime() - new Date(parseInt(redeem.createdAt)).getTime()) < 2 * 24 * 60 * 60 * 1000 // within 2 days
+        );
+
+        if (matchingStake) {
+            const orderTime = new Date(parseInt(matchingStake.createdAt));
+            const settlementTime = new Date(parseInt(redeem.createdAt));
+            const product = productMap.get(redeem.productId);
+
+            transactions.push({
+                productName: `${redeem.coin}-USDT`,
+                targetPrice: product ? parseFloat(product.strikePrice || product.targetPrice || 0) : 0,
+                investmentAmount: parseFloat(matchingStake.orderValue),
+                investmentToken: matchingStake.coin,
+                stakingPeriod: '< 1 Day',
+                settlementPrice: null,
+                orderTime,
+                orderDirection: 'Sell High', // Default guess for crypto stake
+                apr: product ? parseFloat(product.estimateApr || product.apr || 0) : 0,
+                settlementTime,
+                proceeds: parseFloat(redeem.orderValue),
+                proceedsToken: redeem.coin,
+                status: 'Completed',
+                orderId: redeem.orderId,
+                profitAmount: 0, // Needs yield data
+                profitToken: redeem.coin,
+                winOrLoss: 'Loss', // Redeemed in same token usually means target price not hit
+                realApr: null
+            });
+        }
+    });
+
+    // Handle Option Executions (Direct Dual Asset markers)
+    data.filter(item => item.apiSource === 'execution' && item.apiCategory === 'option').forEach(exec => {
+        // Symbol format: SOL-7MAR26-80-P-USDT
+        const parts = exec.symbol.split('-');
+        if (parts.length >= 4) {
+            const baseCoin = parts[0];
+            const strikePrice = parseFloat(parts[2]);
+            const type = parts[3]; // P or C
+
+            transactions.push({
+                productName: `${baseCoin}-USDT`,
+                targetPrice: strikePrice,
+                investmentAmount: parseFloat(exec.execQty),
+                investmentToken: baseCoin, // Guessing
+                stakingPeriod: 'Custom',
+                settlementPrice: parseFloat(exec.indexPrice),
+                orderTime: new Date(parseInt(exec.execTime) - 24 * 60 * 60 * 1000), // Guessing 1 day prior
+                orderDirection: type === 'P' ? 'Buy Low' : 'Sell High',
+                apr: 0, // Needs specific lookup
+                settlementTime: new Date(parseInt(exec.execTime)),
+                proceeds: parseFloat(exec.execValue),
+                proceedsToken: 'USDT',
+                status: 'Completed',
+                orderId: exec.execId,
+                profitAmount: parseFloat(exec.execPrice), // The premium is essentially the "profit" here
+                profitToken: 'USDT',
+                winOrLoss: 'Win',
+                realApr: null
+            });
+        }
+    });
+
+    // If we couldn't find meaningful transactions, return mock for now to not break the UI
+    if (transactions.length === 0) return transformMockData();
+
+    // Final pass for calculated fields
+    return transactions.map(item => {
+        let realApr = null;
+        if (item.status === 'Completed' && item.profitAmount !== null) {
+            const durationMs = item.settlementTime.getTime() - item.orderTime.getTime();
+            const durationDays = durationMs / (1000 * 60 * 60 * 24);
+            if (durationDays > 0 && item.investmentAmount > 0) {
+                // Approximate principle in profit token if converted
+                const principal = item.investmentToken === item.profitToken ? item.investmentAmount : item.investmentAmount * item.targetPrice;
+                if (principal > 0) {
+                    realApr = (item.profitAmount / principal) * (365 / durationDays) * 100;
+                }
+            }
+        }
+        return { ...item, realApr };
+    });
 }
 
 export async function fetchDualAssetTransactions(): Promise<DualAssetTransaction[]> {
@@ -103,12 +217,12 @@ export async function fetchDualAssetTransactions(): Promise<DualAssetTransaction
         const json = await res.json();
 
         if (json.mockFallback) {
-            console.warn("Using mock fallback data:", json.error);
+            console.warn("Using mock fallback data due to API error/fallback:", json.error);
             return transformMockData();
         }
 
         if (json.data && json.data.list) {
-            return transformBybitApiData(json.data.list);
+            return transformBybitApiData(json.data.list, json.data.metadata || []);
         }
 
         return transformMockData();
