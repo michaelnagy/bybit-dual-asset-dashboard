@@ -22,96 +22,6 @@ export interface DualAssetTransaction {
     realApr: number | null; // Annualized Percentage Rate based on actual duration and profit
 }
 
-// Mock data provided by user
-const MOCK_DATA_RAW = [
-    { p: 'SOL-USDT', tp: 85.0, ia: 0.71909407, iat: 'SOL', sp: '1 Day', sep: null, ot: '2026-03-09T01:03:32Z', od: 'Sell High', apr: 1.2582, st: '2026-03-10T07:59:59Z', pr: null, prt: null, stat: 'Active', id: '1e39aa07' },
-    { p: 'ETH-USDT', tp: 1925.0, ia: 20.0, iat: 'USDT', sp: '< 1 Day', sep: 1980.9652, ot: '2026-03-08T13:03:35Z', od: 'Buy Low', apr: 9.0579, st: '2026-03-09T07:59:59Z', pr: 20.1654, prt: 'USDT', stat: 'Completed', id: '749c97e0' },
-    { p: 'SOL-USDT', tp: 83.0, ia: 30.0, iat: 'USDT', sp: '< 1 Day', sep: 82.8857, ot: '2026-03-07T21:35:04Z', od: 'Buy Low', apr: 6.6780, st: '2026-03-08T07:59:59Z', pr: 0.36365012, prt: 'SOL', stat: 'Completed', id: '76e0f63d' },
-    { p: 'SOL-USDT', tp: 82.0, ia: 30.0, iat: 'USDT', sp: '< 1 Day', sep: 82.8857, ot: '2026-03-07T20:27:46Z', od: 'Buy Low', apr: 3.0236, st: '2026-03-08T07:59:59Z', pr: 30.0828, prt: 'USDT', stat: 'Completed', id: '097659e3' },
-    { p: 'SOL-USDT', tp: 84.0, ia: 0.35466338, iat: 'SOL', sp: '< 1 Day', sep: 82.8857, ot: '2026-03-07T20:23:54Z', od: 'Sell High', apr: 2.3903, st: '2026-03-08T07:59:59Z', pr: 0.35543761, prt: 'SOL', stat: 'Completed', id: '25f24a06' },
-    { p: 'SOL-USDT', tp: 85.0, ia: 30.0, iat: 'USDT', sp: '1 Day', sep: 84.2205, ot: '2026-03-06T03:55:32Z', od: 'Buy Low', apr: 1.7810, st: '2026-03-07T07:59:59Z', pr: 0.35466338, prt: 'SOL', stat: 'Completed', id: 'f4db1613' },
-];
-
-export function transformMockData(): DualAssetTransaction[] {
-    return MOCK_DATA_RAW.map(item => {
-        // Calculate Profit
-        let profitAmount = null;
-        let profitToken = null;
-        let winOrLoss = null;
-
-        if (item.stat === 'Completed' && item.pr !== null && item.prt !== null) {
-            if (item.prt === item.iat) {
-                // Returned in same token
-                profitAmount = item.pr - item.ia;
-                profitToken = item.iat;
-                winOrLoss = 'Loss'; // Did not hit target price
-            } else {
-                // Converted! Win!
-                // To get pure premium in the converted token, we need the initial investment 
-                // in terms of the converted token to subtract from total proceeds.
-                // Or mathematically, the pure profit is simply total proceeds minus the 
-                // principal converted at the target price.
-
-                let principalInConvertedToken = 0;
-
-                if (item.od === 'Sell High') {
-                    // Investment was crypto (e.g. SOL), returned in stable (e.g. USDT)
-                    principalInConvertedToken = item.ia * item.tp;
-                } else if (item.od === 'Buy Low') {
-                    // Investment was stable (e.g. USDT), returned in crypto (e.g. SOL)
-                    principalInConvertedToken = item.ia / item.tp;
-                }
-
-                profitAmount = item.pr - principalInConvertedToken;
-                profitToken = item.prt;
-                winOrLoss = 'Win';
-            }
-        }
-
-        let realApr = null;
-        if (item.stat === 'Completed' && item.pr !== null && profitAmount !== null && item.prt !== null) {
-            const durationMs = new Date(item.st).getTime() - new Date(item.ot).getTime();
-            const durationDays = durationMs / (1000 * 60 * 60 * 24);
-
-            let principalForApr = 0;
-            if (item.prt === item.iat) {
-                principalForApr = item.ia;
-            } else {
-                if (item.od === 'Sell High') {
-                    principalForApr = item.ia * item.tp;
-                } else if (item.od === 'Buy Low') {
-                    principalForApr = item.ia / item.tp;
-                }
-            }
-
-            if (principalForApr > 0 && durationDays > 0) {
-                realApr = (profitAmount / principalForApr) * (365 / durationDays) * 100;
-            }
-        }
-
-        return {
-            productName: item.p,
-            targetPrice: item.tp,
-            investmentAmount: item.ia,
-            investmentToken: item.iat,
-            stakingPeriod: item.sp,
-            settlementPrice: item.sep,
-            orderTime: new Date(item.ot),
-            orderDirection: item.od as any,
-            apr: item.apr,
-            settlementTime: new Date(item.st),
-            proceeds: item.pr,
-            proceedsToken: item.prt,
-            status: item.stat,
-            orderId: item.id,
-            profitAmount,
-            profitToken,
-            winOrLoss: winOrLoss as any,
-            realApr,
-        };
-    });
-}
-
 // Transform Bybit API v5 data to our standard format
 function transformBybitApiData(data: any[], metadata: any[] = []): DualAssetTransaction[] {
     if (!data || data.length === 0) return [];
@@ -122,30 +32,74 @@ function transformBybitApiData(data: any[], metadata: any[] = []): DualAssetTran
 
 
     // Process Structured Investment Records (Dual Asset)
-    data.filter(item => item.apiSource === 'investment').forEach(invest => {
-        const productName = invest.productName || (invest.coin + '-USDT');
-        const targetPrice = parseFloat(invest.targetPrice || invest.strikePrice || 0);
-        const investmentAmount = parseFloat(invest.amount || invest.orderValue || invest.investAmount || 0);
-        const investmentToken = invest.coin || invest.investCoin || invest.investToken || productName.split('-')[0];
-        const stakingPeriod = invest.period || invest.stakingPeriod || '< 1 Day';
-        const settlementPrice = invest.settlementPrice ? parseFloat(invest.settlementPrice) : null;
-        const orderTime = invest.createdAt ? new Date(parseInt(invest.createdAt)) : (invest.orderTime ? new Date(invest.orderTime) : new Date());
+    data.filter(item => item.apiSource === 'structured-product' || item.apiSource === 'investment' || item.apiSource === 'earn-order' || item.apiSource === 'staking-order').forEach(invest => {
+        // Handle internal payload fields ending with _e8
+        const productName = invest.product_name || invest.productName || (invest.coin ? invest.coin + '-USDT' : 'Unknown');
+
+        let targetPrice = parseFloat(invest.targetPrice || invest.strikePrice || 0);
+        if (invest.benchmark_price_e8) targetPrice = parseFloat(invest.benchmark_price_e8) / 1e8;
+
+        let investmentAmount = parseFloat(invest.amount || invest.orderValue || invest.investAmount || 0);
+        if (invest.total_locked_amount_e8) investmentAmount = parseFloat(invest.total_locked_amount_e8) / 1e8;
+
+        // Try to determine token, Bybit coin mappings: 18 might be SOL, 5 might be USDT, 2 might be ETH based on the user payload.
+        let investmentToken = invest.coin || invest.investCoin || invest.investToken;
+        if (typeof investmentToken === 'number') {
+           const parts = productName.split(' ')[0].split('-');
+           if (parts.length > 1) {
+              // Guess based on order direction: 1 usually means Buy Low (stablecoin invested), 2 means Sell High (crypto invested)
+              investmentToken = invest.order_direction === 1 ? parts[1] : parts[0];
+           }
+        }
+        if (typeof investmentToken === 'number' || !investmentToken) investmentToken = productName.split('-')[0];
+
+        // Parse Staking Period
+        let stakingPeriod = invest.period || invest.stakingPeriod || '< 1 Day';
+        if (productName && productName.includes('8h')) stakingPeriod = '< 1 Day';
+        else if (invest.duration === 1) stakingPeriod = '1 Day';
+
+        let settlementPrice = invest.settlementPrice ? parseFloat(invest.settlementPrice) : null;
+        if (invest.settlement_price_e8 && invest.settlement_price_e8 !== "0") settlementPrice = parseFloat(invest.settlement_price_e8) / 1e8;
+
+        const orderTime = invest.createdAt ? new Date(parseInt(invest.createdAt)) : (invest.created_at ? new Date(parseInt(invest.created_at) * 1000) : new Date());
 
         let orderDirection = invest.direction || invest.orderType || 'Buy Low';
+        if (invest.order_direction === 1) orderDirection = 'Buy Low';
+        else if (invest.order_direction === 2) orderDirection = 'Sell High';
         if (orderDirection === 'BuyLow') orderDirection = 'Buy Low';
         if (orderDirection === 'SellHigh') orderDirection = 'Sell High';
 
-        const aprStr = invest.apr || invest.yield || invest.estimateApr || "0";
-        const apr = typeof aprStr === 'string' && aprStr.includes('%') ? parseFloat(aprStr.replace('%', '')) : parseFloat(aprStr);
+        let apr = 0;
+        if (invest.apy_e8) apr = parseFloat(invest.apy_e8) / 1e6; // e8 / 1e6 gives percentage i.e 501952606 -> 501.95%
+        else {
+            const aprStr = invest.apr || invest.yield || invest.estimateApr || "0";
+            apr = typeof aprStr === 'string' && aprStr.includes('%') ? parseFloat(aprStr.replace('%', '')) : parseFloat(aprStr);
+        }
 
-        const settlementTime = invest.settlementTime ? new Date(parseInt(invest.settlementTime)) : (invest.settleTime ? new Date(parseInt(invest.settleTime)) : new Date());
+        const settlementTime = invest.settlementTime ? new Date(parseInt(invest.settlementTime)) : (invest.settlement_time && invest.settlement_time !== "-62135596800" ? new Date(parseInt(invest.settlement_time) * 1000) : new Date(parseInt(invest.apply_end_at || "0") * 1000));
 
-        const proceeds = invest.proceeds || invest.payoff || invest.settlementAmount;
-        const proceedsAmount = proceeds ? parseFloat(proceeds) : null;
-        const proceedsToken = invest.proceedsCoin || invest.payoffCoin || invest.settlementCoin || null;
+        let proceedsAmount = invest.proceeds || invest.payoff || invest.settlementAmount ? parseFloat(invest.proceeds || invest.payoff || invest.settlementAmount) : null;
+        if (invest.cumulate_pnl_e8 && invest.cumulate_pnl_e8 !== "0") {
+             // In the payload, cumulate_pnl_e8 seems to be the total returns including principal.
+             proceedsAmount = parseFloat(invest.cumulate_pnl_e8) / 1e8;
+        }
+
+        // Determine Proceeds Token
+        let proceedsToken = invest.proceedsCoin || invest.payoffCoin || invest.settlementCoin || null;
+        if (invest.return_coin !== undefined && invest.return_coin !== 0) {
+             const parts = productName.split(' ')[0].split('-');
+             // In Bybit Dual Asset, coin_x is often the quote (USDT) and coin_y is the base (SOL/ETH)
+             if (invest.return_coin === invest.coin_x) proceedsToken = parts[1];
+             else if (invest.return_coin === invest.coin_y) proceedsToken = parts[0];
+             else if (invest.return_coin === 5) proceedsToken = 'USDT';
+             else if (invest.return_coin === 18) proceedsToken = 'SOL';
+             else if (invest.return_coin === 2) proceedsToken = 'ETH';
+        }
 
         let status = invest.status || 'Active';
-        if (status === 'SUCCESS' || status === 'SETTLED' || status === 'Completed' || status === 'Settled') status = 'Completed';
+        if (invest.order_status === 4 || invest.order_status_v3 === 3) status = 'Completed';
+        else if (invest.order_status === 2 || invest.order_status_v3 === 2) status = 'Active';
+        else if (status === 'SUCCESS' || status === 'SETTLED' || status === 'Completed' || status === 'Settled') status = 'Completed';
         else status = 'Active';
 
         transactions.push({
@@ -162,7 +116,7 @@ function transformBybitApiData(data: any[], metadata: any[] = []): DualAssetTran
             proceeds: proceedsAmount,
             proceedsToken,
             status,
-            orderId: invest.orderId || invest.id || Math.random().toString(),
+            orderId: invest.order_id || invest.orderId || invest.id || Math.random().toString(),
             profitAmount: null,
             profitToken: proceedsToken,
             winOrLoss: null,
@@ -243,7 +197,7 @@ function transformBybitApiData(data: any[], metadata: any[] = []): DualAssetTran
         }
     });
 
-    // If we couldn't find meaningful transactions, return mock for now to not break the UI
+    // Return empty if no transactions found
     if (transactions.length === 0) return [];
 
     // Final pass for calculated fields
