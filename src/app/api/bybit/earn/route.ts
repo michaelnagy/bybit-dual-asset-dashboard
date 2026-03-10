@@ -38,17 +38,28 @@ export async function GET(request: Request) {
     const orderResults = await Promise.all(orderPromises);
     allOrders = [...allOrders, ...orderResults.flat()];
 
-    // 2. Try checking Structured Investment records (for Dual Asset details)
+            // 2. Try fetching Dual Asset specifically via Staking Order History or Earn Order
     try {
-      console.log('Fetching Bybit Structured Investment records...');
-      // Manually calling the endpoint as it might not be in the SDK's high-level methods
-      const investRes: any = await client.get('/v5/asset/investment/order-record', { limit: 100 });
-      if (investRes && investRes.retCode === 0 && investRes.result.list) {
-        const items = investRes.result.list.map((item: any) => ({ ...item, apiSource: 'investment' }));
+      console.log('Fetching Bybit Dual Asset Staking records...');
+      const stakeRes: any = await client.submitCustomRequest('GET', '/v5/asset/staking/order-history', { category: 'STRUCTURED_PRODUCT', limit: 100 });
+      if (stakeRes && stakeRes.retCode === 0 && stakeRes.result.list) {
+        const items = stakeRes.result.list.map((item: any) => ({ ...item, apiSource: 'structured-product' }));
         allOrders = [...allOrders, ...items];
       }
     } catch (e) {
-      console.warn('Failed to fetch investment records:', e);
+      console.warn('Failed to fetch staking records:', e);
+    }
+
+    // 2.1 Try checking Asset Earn Order Record
+    try {
+      console.log('Fetching Bybit Asset Earn Order Record...');
+      const earnRes: any = await client.submitCustomRequest('GET', '/v5/asset/earn/order-record', { category: 'STRUCTURED_PRODUCT', limit: 100 });
+      if (earnRes && earnRes.retCode === 0 && earnRes.result.list) {
+        const items = earnRes.result.list.map((item: any) => ({ ...item, apiSource: 'structured-product' }));
+        allOrders = [...allOrders, ...items];
+      }
+    } catch (e) {
+      console.warn('Failed to fetch earn order record:', e);
     }
 
     // 3. Try checking Option Executions (for Dual Asset settlements)
@@ -102,6 +113,37 @@ export async function GET(request: Request) {
       allOrders = [...allOrders, ...posResults.flat()];
     } catch (e) {
       console.warn('Failed to fetch earn positions:', e);
+    }
+
+            // 7. Check the Transaction Log for Dual Asset subscriptions/refunds
+    // Private endpoints must use submitCustomRequest
+    try {
+      console.log('Fetching Bybit Transaction logs...');
+      const logRes: any = await client.submitCustomRequest('GET', '/v5/account/transaction-log', { accountType: 'UNIFIED', type: 'STRUCTURE_PRODUCT_SUBSCRIPTION', limit: 50 });
+      if (logRes && logRes.retCode === 0 && logRes.result.list) {
+        const items = logRes.result.list.map((item: any) => ({ ...item, apiSource: 'transaction-log', apiCategory: 'subscription' }));
+        allOrders = [...allOrders, ...items];
+      }
+
+      const refundRes: any = await client.submitCustomRequest('GET', '/v5/account/transaction-log', { accountType: 'UNIFIED', type: 'STRUCTURE_PRODUCT_REFUND', limit: 50 });
+      if (refundRes && refundRes.retCode === 0 && refundRes.result.list) {
+        const items = refundRes.result.list.map((item: any) => ({ ...item, apiSource: 'transaction-log', apiCategory: 'refund' }));
+        allOrders = [...allOrders, ...items];
+      }
+    } catch (e) {
+      console.warn('Failed to fetch transaction logs:', e);
+    }
+
+    // 8. Try checking Asset Earn Order Record (valid endpoint)
+    try {
+      console.log('Fetching Bybit Asset Earn Order History...');
+      const earnRes: any = await client.submitCustomRequest('GET', '/v5/earn/order', { category: 'STRUCTURED_PRODUCT', limit: 50 });
+      if (earnRes && earnRes.retCode === 0 && earnRes.result.list) {
+        const items = earnRes.result.list.map((item: any) => ({ ...item, apiSource: 'earn-order' }));
+        allOrders = [...allOrders, ...items];
+      }
+    } catch (e) {
+      console.warn('Failed to fetch earn order record:', e);
     }
 
     // 6. Enrich with Product Info (to get APRs/Metadata)
