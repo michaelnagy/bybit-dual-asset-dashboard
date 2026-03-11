@@ -343,3 +343,11 @@
   border-right: 2px solid rgba(148, 163, 184, 0.85);
   border-bottom: 2px solid rgba(148, 163, 184, 0.85);
 }
+
+.is-positive {
+  color: #34d399;
+}
+
+.is-negative {
+  color: #f87171;
+}

@@ -2,14 +2,6 @@
   const OVERLAY_ID = "bybit-dual-asset-overlay-root";
   const STORAGE_KEY = "bybitDualAssetOverlayState";
   const ORDERS_ENDPOINT = "https://www.bybit.com/x-api/s1/byfi/dual-assets/orders";
-  const DEFAULT_REQUEST_BODY = {
-    product_type: 2,
-    only_effective_order: false,
-    start_at: null,
-    end_at: null,
-    base_coin: null,
-    limit: 10,
-  };
   const COIN_SYMBOLS = {
     2: "ETH",
     5: "USDT",
@@ -389,6 +381,11 @@
           buyLowVolume: 0,
           sellHighWeightedSum: 0,
           sellHighVolume: 0,
+          convertedBuyWeightedSum: 0,
+          convertedBuyVolume: 0,
+          convertedSellWeightedSum: 0,
+          convertedSellVolume: 0,
+          tradingPnlUsdt: 0,
           aprSum: 0,
           aprCount: 0,
           settledAprSum: 0,
@@ -416,6 +413,20 @@
         }
       }
 
+      const isConverted = order.status === "Completed"
+        && order.proceedsToken !== null
+        && order.proceedsToken !== order.investmentToken;
+
+      if (isConverted && order.targetPrice > 0) {
+        if (order.orderDirection === "Buy Low") {
+          vwap[key].convertedBuyWeightedSum += order.targetPrice * order.investmentAmount;
+          vwap[key].convertedBuyVolume += order.investmentAmount;
+        } else {
+          vwap[key].convertedSellWeightedSum += order.targetPrice * order.investmentAmount;
+          vwap[key].convertedSellVolume += order.investmentAmount;
+        }
+      }
+
       if (order.status === "Completed" && usdValue !== null) {
         cumulativeUsdtProfit += usdValue;
         const dateLabel = order.settlementTime
@@ -426,6 +437,31 @@
           profit: usdValue,
           cumulative: cumulativeUsdtProfit,
         });
+      }
+    }
+
+    let totalTradingPnlUsdt = 0;
+
+    for (const order of sorted) {
+      const key = order.productName.split(" ")[0];
+      const pairData = vwap[key];
+      if (!pairData) continue;
+
+      const isConverted = order.status === "Completed"
+        && order.proceedsToken !== null
+        && order.proceedsToken !== order.investmentToken;
+
+      if (isConverted && order.orderDirection === "Sell High" && order.targetPrice > 0) {
+        const convertedBuyVwap = pairData.convertedBuyVolume > 0
+          ? pairData.convertedBuyWeightedSum / pairData.convertedBuyVolume
+          : 0;
+
+        if (convertedBuyVwap > 0) {
+          const gain = (order.targetPrice - convertedBuyVwap) * order.investmentAmount;
+          order.tradingGainUsdt = gain;
+          pairData.tradingPnlUsdt += gain;
+          totalTradingPnlUsdt += gain;
+        }
       }
     }
 
@@ -458,6 +494,11 @@
         product,
         buyLowVwap: data.buyLowVolume > 0 ? data.buyLowWeightedSum / data.buyLowVolume : 0,
         sellHighVwap: data.sellHighVolume > 0 ? data.sellHighWeightedSum / data.sellHighVolume : 0,
+        convertedBuyVwap: data.convertedBuyVolume > 0
+          ? data.convertedBuyWeightedSum / data.convertedBuyVolume : 0,
+        convertedSellVwap: data.convertedSellVolume > 0
+          ? data.convertedSellWeightedSum / data.convertedSellVolume : 0,
+        tradingPnlUsdt: data.tradingPnlUsdt,
         avgApr: data.aprCount > 0 ? data.aprSum / data.aprCount : 0,
         avgSettledApr: data.settledAprCount > 0 ? data.settledAprSum / data.settledAprCount : 0,
       };
@@ -465,6 +506,7 @@
 
     return {
       totalUsdtProfit,
+      totalTradingPnlUsdt,
       activeCount,
       completedCount,
       winRate,
@@ -630,6 +672,7 @@
             </td>
             <td>${escapeHtml(formatAmount(order.profitAmount, order.profitToken, 4))}</td>
             <td>${escapeHtml(formatUsd(approxUsd))}</td>
+            <td class="${order.tradingGainUsdt !== undefined ? (order.tradingGainUsdt >= 0 ? "is-positive" : "is-negative") : ""}">${order.tradingGainUsdt !== undefined ? escapeHtml(formatUsd(order.tradingGainUsdt)) : "-"}</td>
             <td>
               <div class="bybit-da-stacked">
                 <span class="bybit-da-pill ${order.status === "Completed" ? "is-complete" : "is-active"}">${escapeHtml(order.status)}</span>
@@ -656,6 +699,22 @@
                   <div>
                     <div class="bybit-da-vwap-dir">Sell High VWAP</div>
                     <div class="bybit-da-vwap-price is-sell">${tp.sellHighVwap > 0 ? escapeHtml(formatNumber(tp.sellHighVwap, { minimumFractionDigits: 2, maximumFractionDigits: 4 })) : "-"}</div>
+                  </div>
+                </div>
+                <div class="bybit-da-vwap-row" style="margin-top:6px">
+                  <div>
+                    <div class="bybit-da-vwap-dir">Converted Buy VWAP</div>
+                    <div class="bybit-da-vwap-price is-buy">${tp.convertedBuyVwap > 0 ? escapeHtml(formatNumber(tp.convertedBuyVwap, { minimumFractionDigits: 2, maximumFractionDigits: 4 })) : "-"}</div>
+                  </div>
+                  <div>
+                    <div class="bybit-da-vwap-dir">Converted Sell VWAP</div>
+                    <div class="bybit-da-vwap-price is-sell">${tp.convertedSellVwap > 0 ? escapeHtml(formatNumber(tp.convertedSellVwap, { minimumFractionDigits: 2, maximumFractionDigits: 4 })) : "-"}</div>
+                  </div>
+                </div>
+                <div class="bybit-da-vwap-row" style="margin-top:6px">
+                  <div>
+                    <div class="bybit-da-vwap-dir">Trading P&L</div>
+                    <div class="bybit-da-vwap-price ${tp.tradingPnlUsdt >= 0 ? "is-positive" : "is-negative"}">${escapeHtml(formatUsd(tp.tradingPnlUsdt))}</div>
                   </div>
                 </div>
                 <div class="bybit-da-vwap-row" style="margin-top:6px">
@@ -693,6 +752,10 @@
           <div class="bybit-da-overlay-value">${escapeHtml(formatUsd(summary.totalUsdtProfit))}</div>
         </div>
         <div class="bybit-da-overlay-card">
+          <div class="bybit-da-overlay-label">Trading P&L</div>
+          <div class="bybit-da-overlay-value ${summary.totalTradingPnlUsdt >= 0 ? "is-positive" : "is-negative"}">${escapeHtml(formatUsd(summary.totalTradingPnlUsdt))}</div>
+        </div>
+        <div class="bybit-da-overlay-card">
           <div class="bybit-da-overlay-label">Win Rate</div>
           <div class="bybit-da-overlay-value">${escapeHtml(formatPercent(summary.winRate))}</div>
         </div>
@@ -726,6 +789,7 @@
                 <th>APR / Settled</th>
                 <th>Earned</th>
                 <th>Earned USDT</th>
+                <th>Trading Gain</th>
                 <th>Status</th>
                 <th>Settled</th>
               </tr>
@@ -958,37 +1022,74 @@
     };
     renderDataState();
 
+    const PAGE_LIMIT = 50;
+    const MAX_PAGES = 20;
+
     try {
-      const response = await fetch(ORDERS_ENDPOINT, {
-        method: "POST",
-        credentials: "include",
-        headers: {
-          "content-type": "application/json",
-        },
-        body: JSON.stringify(DEFAULT_REQUEST_BODY),
-      });
+      const allRows = [];
+      let endAt = null;
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status} ${response.statusText}`);
+      for (let page = 0; page < MAX_PAGES; page += 1) {
+        const requestBody = {
+          product_type: 2,
+          only_effective_order: false,
+          start_at: null,
+          end_at: endAt,
+          base_coin: null,
+          limit: PAGE_LIMIT,
+        };
+
+        const response = await fetch(ORDERS_ENDPOINT, {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(requestBody),
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status} ${response.statusText}`);
+        }
+
+        const payload = await response.json();
+        if (payload.ret_code !== 0) {
+          throw new Error(payload.ret_msg || `Bybit error ${payload.ret_code}`);
+        }
+
+        const rows =
+          payload &&
+          payload.result &&
+          Array.isArray(payload.result.dual_assets_orders)
+            ? payload.result.dual_assets_orders
+            : [];
+
+        if (fetchId !== latestFetchId) {
+          return;
+        }
+
+        allRows.push(...rows);
+
+        if (rows.length < PAGE_LIMIT) {
+          break;
+        }
+
+        let oldestCreatedAt = Infinity;
+        for (let i = 0; i < rows.length; i += 1) {
+          const ts = Number(rows[i].created_at);
+          if (Number.isFinite(ts) && ts < oldestCreatedAt) {
+            oldestCreatedAt = ts;
+          }
+        }
+
+        if (!Number.isFinite(oldestCreatedAt)) {
+          break;
+        }
+
+        endAt = oldestCreatedAt - 1;
       }
 
-      const payload = await response.json();
-      if (payload.ret_code !== 0) {
-        throw new Error(payload.ret_msg || `Bybit error ${payload.ret_code}`);
-      }
-
-      const rows =
-        payload &&
-        payload.result &&
-        Array.isArray(payload.result.dual_assets_orders)
-          ? payload.result.dual_assets_orders
-          : [];
-
-      if (fetchId !== latestFetchId) {
-        return;
-      }
-
-      const normalized = rows.map(normalizeOrder);
+      const normalized = allRows.map(normalizeOrder);
       await fetchSpotPrices(normalized);
 
       dataState = {
