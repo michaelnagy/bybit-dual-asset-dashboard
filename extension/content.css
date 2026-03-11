@@ -81,6 +81,11 @@
   background: rgba(30, 41, 59, 0.95);
 }
 
+.bybit-da-overlay-button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
 .bybit-da-overlay-body {
   display: flex;
   flex-direction: column;
@@ -104,6 +109,21 @@
   color: #86efac;
   font-size: 11px;
   font-weight: 600;
+}
+
+.bybit-da-overlay-badge.is-loading {
+  background: rgba(59, 130, 246, 0.15);
+  color: #93c5fd;
+}
+
+.bybit-da-overlay-badge.is-error {
+  background: rgba(239, 68, 68, 0.15);
+  color: #fca5a5;
+}
+
+.bybit-da-overlay-badge.is-empty {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fcd34d;
 }
 
 .bybit-da-overlay-grid {
@@ -137,6 +157,14 @@
   color: #cbd5e1;
 }
 
+.bybit-da-overlay-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11px;
+  color: #94a3b8;
+}
+
 .bybit-da-overlay-list {
   margin: 0;
   padding-left: 18px;
@@ -147,6 +175,82 @@
 
 .bybit-da-overlay-list li + li {
   margin-top: 6px;
+}
+
+.bybit-da-stacked {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.bybit-da-muted {
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.bybit-da-pill {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.bybit-da-pill.is-buy {
+  background: rgba(34, 211, 238, 0.12);
+  color: #67e8f9;
+}
+
+.bybit-da-pill.is-sell {
+  background: rgba(217, 70, 239, 0.12);
+  color: #f0abfc;
+}
+
+.bybit-da-pill.is-active {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fcd34d;
+}
+
+.bybit-da-pill.is-complete {
+  background: rgba(34, 197, 94, 0.15);
+  color: #86efac;
+}
+
+.bybit-da-overlay-table-wrap {
+  overflow: auto;
+  max-height: 320px;
+  border: 1px solid rgba(51, 65, 85, 0.9);
+  border-radius: 12px;
+}
+
+.bybit-da-overlay-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.bybit-da-overlay-table th,
+.bybit-da-overlay-table td {
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(51, 65, 85, 0.6);
+  vertical-align: top;
+}
+
+.bybit-da-overlay-table th {
+  position: sticky;
+  top: 0;
+  background: rgba(15, 23, 42, 0.98);
+  color: #94a3b8;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.bybit-da-overlay-table td {
+  color: #e2e8f0;
 }
 
 .bybit-da-overlay-resize-handle {

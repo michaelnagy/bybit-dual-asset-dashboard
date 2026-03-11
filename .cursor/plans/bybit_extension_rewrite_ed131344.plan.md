@@ -230,6 +230,8 @@ Work this plan in small, reviewable parts. At the end of each part:
 
 **Goal:** Wire the overlay to the real Bybit `dual-assets/orders` endpoint and normalize the response into dashboard-ready records.
 
+**Status:** Completed
+
 **Includes:**
 
 - Implement the in-page/authenticated fetch path
