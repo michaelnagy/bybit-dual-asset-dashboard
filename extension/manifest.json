@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Bybit Dual Asset Overlay",
+  "description": "Injects a draggable overlay dashboard on Bybit's Dual Asset orders page.",
+  "version": "0.1.0",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://www.bybit.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.bybit.com/user/assets/order/financial/financial-dual-asset-orders/dual-asset-order*"
+      ],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}
