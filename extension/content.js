@@ -277,7 +277,7 @@
             : investmentAmount / targetPrice;
         profitAmount = proceeds - convertedPrincipal;
         profitToken = proceedsToken;
-        winOrLoss = "Win";
+        winOrLoss = "Loss";
         principalForApr = convertedPrincipal;
       }
     }
@@ -352,8 +352,18 @@
     let completedCount = 0;
     let wins = 0;
     let losses = 0;
+    const vwap = {};
+    const timelinePoints = [];
 
-    for (const order of orders) {
+    const sorted = [...orders].sort(function bySettlement(a, b) {
+      const ta = (a.settlementTime || a.orderTime || new Date(0)).getTime();
+      const tb = (b.settlementTime || b.orderTime || new Date(0)).getTime();
+      return ta - tb;
+    });
+
+    let cumulativeUsdtProfit = 0;
+
+    for (const order of sorted) {
       if (order.status === "Active") {
         activeCount += 1;
       } else {
@@ -370,17 +380,127 @@
       if (usdValue !== null) {
         totalUsdtProfit += usdValue;
       }
+
+      if (order.targetPrice > 0) {
+        const key = order.productName.split(" ")[0];
+        if (!vwap[key]) {
+          vwap[key] = {
+            buyLowWeightedSum: 0,
+            buyLowVolume: 0,
+            sellHighWeightedSum: 0,
+            sellHighVolume: 0,
+          };
+        }
+
+        if (order.orderDirection === "Buy Low") {
+          vwap[key].buyLowWeightedSum += order.targetPrice * order.investmentAmount;
+          vwap[key].buyLowVolume += order.investmentAmount;
+        } else {
+          vwap[key].sellHighWeightedSum += order.targetPrice * order.investmentAmount;
+          vwap[key].sellHighVolume += order.investmentAmount;
+        }
+      }
+
+      if (order.status === "Completed" && usdValue !== null) {
+        cumulativeUsdtProfit += usdValue;
+        const dateLabel = order.settlementTime
+          ? order.settlementTime.toLocaleDateString()
+          : "-";
+        timelinePoints.push({
+          date: dateLabel,
+          profit: usdValue,
+          cumulative: cumulativeUsdtProfit,
+        });
+      }
     }
 
     const settledCount = wins + losses;
     const winRate = settledCount > 0 ? (wins / settledCount) * 100 : 0;
+
+    const avgTargetPrices = Object.keys(vwap).map(function mapVwap(product) {
+      const data = vwap[product];
+      return {
+        product,
+        buyLowVwap: data.buyLowVolume > 0 ? data.buyLowWeightedSum / data.buyLowVolume : 0,
+        sellHighVwap: data.sellHighVolume > 0 ? data.sellHighWeightedSum / data.sellHighVolume : 0,
+      };
+    });
 
     return {
       totalUsdtProfit,
       activeCount,
       completedCount,
       winRate,
+      avgTargetPrices,
+      timelinePoints,
     };
+  }
+
+  function buildSvgTimeline(points, width, height) {
+    if (!points.length) {
+      return "";
+    }
+
+    const padding = { top: 10, right: 10, bottom: 24, left: 46 };
+    const chartW = width - padding.left - padding.right;
+    const chartH = height - padding.top - padding.bottom;
+    const values = points.map(function getVal(p) { return p.cumulative; });
+    const minVal = Math.min(0, ...values);
+    const maxVal = Math.max(...values);
+    const range = maxVal - minVal || 1;
+
+    function x(i) {
+      return padding.left + (i / Math.max(1, points.length - 1)) * chartW;
+    }
+
+    function y(v) {
+      return padding.top + chartH - ((v - minVal) / range) * chartH;
+    }
+
+    const linePath = points
+      .map(function toCoord(p, i) {
+        return `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(p.cumulative).toFixed(1)}`;
+      })
+      .join(" ");
+
+    const areaPath = linePath +
+      ` L${x(points.length - 1).toFixed(1)},${(padding.top + chartH).toFixed(1)}` +
+      ` L${x(0).toFixed(1)},${(padding.top + chartH).toFixed(1)} Z`;
+
+    const dots = points
+      .map(function toDot(p, i) {
+        return `<circle cx="${x(i).toFixed(1)}" cy="${y(p.cumulative).toFixed(1)}" r="3" fill="#34d399"/>`;
+      })
+      .join("");
+
+    const ticks = 4;
+    const gridLines = [];
+    for (var t = 0; t <= ticks; t++) {
+      var val = minVal + (range / ticks) * t;
+      var yPos = y(val);
+      gridLines.push(
+        `<line x1="${padding.left}" x2="${width - padding.right}" y1="${yPos.toFixed(1)}" y2="${yPos.toFixed(1)}" stroke="rgba(51,65,85,0.5)" stroke-dasharray="3 3"/>` +
+        `<text x="${padding.left - 4}" y="${(yPos + 3).toFixed(1)}" fill="#94a3b8" font-size="9" text-anchor="end">$${val.toFixed(2)}</text>`
+      );
+    }
+
+    var firstLabel = escapeHtml(points[0].date);
+    var lastLabel = escapeHtml(points[points.length - 1].date);
+
+    return `<svg viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg" class="bybit-da-chart-svg">
+      ${gridLines.join("")}
+      <path d="${areaPath}" fill="url(#bybitDaGrad)" opacity="0.3"/>
+      <path d="${linePath}" fill="none" stroke="#34d399" stroke-width="2" stroke-linejoin="round"/>
+      ${dots}
+      <text x="${padding.left}" y="${height - 4}" fill="#94a3b8" font-size="9">${firstLabel}</text>
+      <text x="${width - padding.right}" y="${height - 4}" fill="#94a3b8" font-size="9" text-anchor="end">${lastLabel}</text>
+      <defs>
+        <linearGradient id="bybitDaGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#34d399" stop-opacity="0.4"/>
+          <stop offset="100%" stop-color="#34d399" stop-opacity="0"/>
+        </linearGradient>
+      </defs>
+    </svg>`;
   }
 
   function getStateBadge() {
@@ -440,8 +560,12 @@
     const rowsHtml = dataState.orders
       .map(function renderRow(order) {
         const approxUsd = getApproximateUsdValue(order);
+        const countdownAttr = order.status === "Active"
+          ? ` data-countdown-target="${(getTargetCountdownDate(order.sourceRaw) || new Date(0)).getTime()}"`
+          : "";
         return `
           <tr>
+            <td>${escapeHtml(formatDateTime(order.orderTime))}</td>
             <td>${escapeHtml(order.productName)}</td>
             <td>
               <span class="bybit-da-pill ${order.orderDirection === "Buy Low" ? "is-buy" : "is-sell"}">
@@ -461,13 +585,43 @@
             <td>
               <div class="bybit-da-stacked">
                 <span class="bybit-da-pill ${order.status === "Completed" ? "is-complete" : "is-active"}">${escapeHtml(order.status)}</span>
-                <span class="bybit-da-muted">${escapeHtml(order.countdownLabel || order.winOrLoss || "-")}</span>
+                <span class="bybit-da-muted bybit-da-countdown"${countdownAttr}>${escapeHtml(order.countdownLabel || order.winOrLoss || "-")}</span>
               </div>
             </td>
+            <td class="bybit-da-muted">${escapeHtml(formatDateTime(order.settlementTime))}</td>
           </tr>
         `;
       })
       .join("");
+
+    const vwapHtml = summary.avgTargetPrices.length
+      ? summary.avgTargetPrices
+          .map(function renderVwap(tp) {
+            return `
+              <div class="bybit-da-overlay-card bybit-da-vwap-card">
+                <div class="bybit-da-overlay-label">${escapeHtml(tp.product)}</div>
+                <div class="bybit-da-vwap-row">
+                  <div>
+                    <div class="bybit-da-vwap-dir">Buy Low</div>
+                    <div class="bybit-da-vwap-price is-buy">${tp.buyLowVwap > 0 ? escapeHtml(formatNumber(tp.buyLowVwap, { minimumFractionDigits: 2, maximumFractionDigits: 4 })) : "-"}</div>
+                  </div>
+                  <div>
+                    <div class="bybit-da-vwap-dir">Sell High</div>
+                    <div class="bybit-da-vwap-price is-sell">${tp.sellHighVwap > 0 ? escapeHtml(formatNumber(tp.sellHighVwap, { minimumFractionDigits: 2, maximumFractionDigits: 4 })) : "-"}</div>
+                  </div>
+                </div>
+              </div>
+            `;
+          })
+          .join("")
+      : "";
+
+    const chartHtml = summary.timelinePoints.length > 1
+      ? `<div class="bybit-da-overlay-card">
+          <div class="bybit-da-overlay-label">Cumulative Profit Timeline (USDT)</div>
+          <div class="bybit-da-chart-wrap">${buildSvgTimeline(summary.timelinePoints, 440, 160)}</div>
+        </div>`
+      : "";
 
     bodyEl.innerHTML = `
       ${getStateBadge()}
@@ -493,20 +647,15 @@
           <div class="bybit-da-overlay-value">${escapeHtml(String(summary.completedCount))}</div>
         </div>
       </div>
-      <div class="bybit-da-overlay-card">
-        <div class="bybit-da-overlay-label">Part 3 verification</div>
-        <ul class="bybit-da-overlay-list">
-          <li>Data comes from Bybit's live <code>dual-assets/orders</code> endpoint.</li>
-          <li>Rows are normalized into active/completed records with derived profit and countdown fields.</li>
-          <li>The full UI port, charts, and richer summaries are reserved for Part 4.</li>
-        </ul>
-      </div>
+      ${vwapHtml ? '<div class="bybit-da-overlay-label bybit-da-section-label">VWAP Target Prices</div><div class="bybit-da-overlay-grid">' + vwapHtml + "</div>" : ""}
+      ${chartHtml}
       <div class="bybit-da-overlay-card">
         <div class="bybit-da-overlay-label">Dual Asset Orders</div>
         <div class="bybit-da-overlay-table-wrap">
           <table class="bybit-da-overlay-table">
             <thead>
               <tr>
+                <th>Order Date</th>
                 <th>Product</th>
                 <th>Direction</th>
                 <th>Target</th>
@@ -515,6 +664,7 @@
                 <th>Earned</th>
                 <th>Earned USDT</th>
                 <th>Status</th>
+                <th>Settled</th>
               </tr>
             </thead>
             <tbody>${rowsHtml}</tbody>
@@ -758,6 +908,28 @@
   window.addEventListener("resize", function handleResize() {
     applyState(state);
   });
+
+  function tickCountdowns() {
+    var els = bodyEl.querySelectorAll("[data-countdown-target]");
+    for (var i = 0; i < els.length; i++) {
+      var target = Number(els[i].getAttribute("data-countdown-target"));
+      if (!target) {
+        continue;
+      }
+
+      var diff = target - Date.now();
+      if (diff <= 0) {
+        els[i].textContent = "Settling...";
+      } else {
+        var hours = Math.floor(diff / (1000 * 60 * 60));
+        var minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+        var seconds = Math.floor((diff % (1000 * 60)) / 1000);
+        els[i].textContent = hours + "h " + minutes + "m " + seconds + "s";
+      }
+    }
+  }
+
+  setInterval(tickCountdowns, 1000);
 
   readState().then(function mountOverlay(savedState) {
     state = { ...DEFAULT_STATE, ...(savedState || {}) };
