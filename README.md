@@ -4,9 +4,9 @@ A Chrome extension that injects a draggable overlay dashboard on top of Bybit's 
 
 ## Screenshots
 
-![Summary, VWAP, and profit timeline](assets/screenshot-summary.png)
+![Summary, VWAP, and profit timeline](extension/assets/screenshot-summary.png)
 
-![Orders table with strike monitoring](assets/screenshot-table.png)
+![Orders table with strike monitoring](extension/assets/screenshot-table.png)
 
 ## Installation
 
