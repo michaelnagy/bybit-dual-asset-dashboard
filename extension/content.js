@@ -382,17 +382,31 @@
         totalUsdtProfit += usdValue;
       }
 
-      if (order.targetPrice > 0) {
-        const key = order.productName.split(" ")[0];
-        if (!vwap[key]) {
-          vwap[key] = {
-            buyLowWeightedSum: 0,
-            buyLowVolume: 0,
-            sellHighWeightedSum: 0,
-            sellHighVolume: 0,
-          };
-        }
+      const key = order.productName.split(" ")[0];
+      if (!vwap[key]) {
+        vwap[key] = {
+          buyLowWeightedSum: 0,
+          buyLowVolume: 0,
+          sellHighWeightedSum: 0,
+          sellHighVolume: 0,
+          aprSum: 0,
+          aprCount: 0,
+          settledAprSum: 0,
+          settledAprCount: 0,
+        };
+      }
 
+      if (order.apr > 0) {
+        vwap[key].aprSum += order.apr;
+        vwap[key].aprCount += 1;
+      }
+
+      if (order.settledApr !== null && order.settledApr > 0) {
+        vwap[key].settledAprSum += order.settledApr;
+        vwap[key].settledAprCount += 1;
+      }
+
+      if (order.targetPrice > 0) {
         if (order.orderDirection === "Buy Low") {
           vwap[key].buyLowWeightedSum += order.targetPrice * order.investmentAmount;
           vwap[key].buyLowVolume += order.investmentAmount;
@@ -415,6 +429,26 @@
       }
     }
 
+    let aprSum = 0;
+    let aprCount = 0;
+    let settledAprSum = 0;
+    let settledAprCount = 0;
+
+    for (var j = 0; j < sorted.length; j++) {
+      if (sorted[j].apr > 0) {
+        aprSum += sorted[j].apr;
+        aprCount += 1;
+      }
+
+      if (sorted[j].settledApr !== null && sorted[j].settledApr > 0) {
+        settledAprSum += sorted[j].settledApr;
+        settledAprCount += 1;
+      }
+    }
+
+    const avgApr = aprCount > 0 ? aprSum / aprCount : 0;
+    const avgSettledApr = settledAprCount > 0 ? settledAprSum / settledAprCount : 0;
+
     const settledCount = wins + losses;
     const winRate = settledCount > 0 ? (wins / settledCount) * 100 : 0;
 
@@ -424,6 +458,8 @@
         product,
         buyLowVwap: data.buyLowVolume > 0 ? data.buyLowWeightedSum / data.buyLowVolume : 0,
         sellHighVwap: data.sellHighVolume > 0 ? data.sellHighWeightedSum / data.sellHighVolume : 0,
+        avgApr: data.aprCount > 0 ? data.aprSum / data.aprCount : 0,
+        avgSettledApr: data.settledAprCount > 0 ? data.settledAprSum / data.settledAprCount : 0,
       };
     });
 
@@ -432,6 +468,8 @@
       activeCount,
       completedCount,
       winRate,
+      avgApr,
+      avgSettledApr,
       avgTargetPrices,
       timelinePoints,
     };
@@ -612,12 +650,22 @@
                 <div class="bybit-da-overlay-label">${escapeHtml(tp.product)}</div>
                 <div class="bybit-da-vwap-row">
                   <div>
-                    <div class="bybit-da-vwap-dir">Buy Low</div>
+                    <div class="bybit-da-vwap-dir">Buy Low VWAP</div>
                     <div class="bybit-da-vwap-price is-buy">${tp.buyLowVwap > 0 ? escapeHtml(formatNumber(tp.buyLowVwap, { minimumFractionDigits: 2, maximumFractionDigits: 4 })) : "-"}</div>
                   </div>
                   <div>
-                    <div class="bybit-da-vwap-dir">Sell High</div>
+                    <div class="bybit-da-vwap-dir">Sell High VWAP</div>
                     <div class="bybit-da-vwap-price is-sell">${tp.sellHighVwap > 0 ? escapeHtml(formatNumber(tp.sellHighVwap, { minimumFractionDigits: 2, maximumFractionDigits: 4 })) : "-"}</div>
+                  </div>
+                </div>
+                <div class="bybit-da-vwap-row" style="margin-top:6px">
+                  <div>
+                    <div class="bybit-da-vwap-dir">Avg APR</div>
+                    <div class="bybit-da-vwap-apr">${escapeHtml(formatPercent(tp.avgApr))}</div>
+                  </div>
+                  <div>
+                    <div class="bybit-da-vwap-dir">Avg Settled APR</div>
+                    <div class="bybit-da-vwap-apr">${escapeHtml(formatPercent(tp.avgSettledApr))}</div>
                   </div>
                 </div>
               </div>
@@ -655,6 +703,11 @@
         <div class="bybit-da-overlay-card">
           <div class="bybit-da-overlay-label">Completed Orders</div>
           <div class="bybit-da-overlay-value">${escapeHtml(String(summary.completedCount))}</div>
+        </div>
+        <div class="bybit-da-overlay-card">
+          <div class="bybit-da-overlay-label">Avg APR / Settled</div>
+          <div class="bybit-da-overlay-value">${escapeHtml(formatPercent(summary.avgApr))}</div>
+          <div class="bybit-da-muted" style="margin-top:4px">${escapeHtml(formatPercent(summary.avgSettledApr))}</div>
         </div>
       </div>
       ${vwapHtml ? '<div class="bybit-da-overlay-label bybit-da-section-label">VWAP Target Prices</div><div class="bybit-da-overlay-grid">' + vwapHtml + "</div>" : ""}

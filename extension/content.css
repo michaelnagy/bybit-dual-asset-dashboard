@@ -307,6 +307,12 @@
   color: #f0abfc;
 }
 
+.bybit-da-vwap-apr {
+  font-size: 14px;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
 .bybit-da-chart-wrap {
   overflow: hidden;
   border-radius: 8px;
