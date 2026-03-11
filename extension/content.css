@@ -213,6 +213,16 @@
   color: #f0abfc;
 }
 
+.bybit-da-pill.is-triggering {
+  background: rgba(239, 68, 68, 0.15);
+  color: #fca5a5;
+}
+
+.bybit-da-pill.is-safe {
+  background: rgba(34, 197, 94, 0.12);
+  color: #86efac;
+}
+
 .bybit-da-pill.is-active {
   background: rgba(245, 158, 11, 0.15);
   color: #fcd34d;

@@ -63,6 +63,7 @@
   let state = { ...DEFAULT_STATE };
   let isFetching = false;
   let latestFetchId = 0;
+  let spotPrices = {};
   let dataState = {
     status: "loading",
     error: null,
@@ -563,6 +564,10 @@
         const countdownAttr = order.status === "Active"
           ? ` data-countdown-target="${(getTargetCountdownDate(order.sourceRaw) || new Date(0)).getTime()}"`
           : "";
+        const strike = getStrikeStatus(order);
+        const strikeHtml = strike
+          ? `<span class="bybit-da-pill ${strike.triggering ? "is-triggering" : "is-safe"}">${strike.triggering ? "Triggering" : "Safe"} @ ${escapeHtml(formatNumber(strike.currentPrice, { minimumFractionDigits: 2, maximumFractionDigits: 2 }))}</span>`
+          : "";
         return `
           <tr>
             <td>${escapeHtml(formatDateTime(order.orderTime))}</td>
@@ -572,7 +577,12 @@
                 ${escapeHtml(order.orderDirection)}
               </span>
             </td>
-            <td>${escapeHtml(formatNumber(order.targetPrice, { minimumFractionDigits: 2, maximumFractionDigits: 4 }))}</td>
+            <td>
+              <div class="bybit-da-stacked">
+                <span>${escapeHtml(formatNumber(order.targetPrice, { minimumFractionDigits: 2, maximumFractionDigits: 4 }))}</span>
+                ${strikeHtml}
+              </div>
+            </td>
             <td>${escapeHtml(formatAmount(order.investmentAmount, order.investmentToken, 4))}</td>
             <td>
               <div class="bybit-da-stacked">
@@ -660,7 +670,7 @@
                 <th>Direction</th>
                 <th>Target</th>
                 <th>Amount</th>
-                <th>APR</th>
+                <th>APR / Settled</th>
                 <th>Earned</th>
                 <th>Earned USDT</th>
                 <th>Status</th>
@@ -827,6 +837,58 @@
     window.addEventListener("pointerup", onUp);
   }
 
+  async function fetchSpotPrices(orders) {
+    const symbols = new Set();
+    for (var i = 0; i < orders.length; i++) {
+      if (orders[i].status === "Active") {
+        var pair = orders[i].productName.split(" ")[0].replace("-", "");
+        symbols.add(pair);
+      }
+    }
+
+    var promises = [];
+    symbols.forEach(function fetchTicker(symbol) {
+      promises.push(
+        fetch("https://api.bybit.com/v5/market/tickers?category=spot&symbol=" + symbol)
+          .then(function handleResp(r) { return r.json(); })
+          .then(function handleJson(data) {
+            if (
+              data.retCode === 0 &&
+              data.result &&
+              data.result.list &&
+              data.result.list.length
+            ) {
+              spotPrices[symbol] = Number(data.result.list[0].lastPrice);
+            }
+          })
+          .catch(function ignore() {})
+      );
+    });
+
+    await Promise.all(promises);
+  }
+
+  function getStrikeStatus(order) {
+    if (order.status !== "Active") {
+      return null;
+    }
+
+    var symbol = order.productName.split(" ")[0].replace("-", "");
+    var currentPrice = spotPrices[symbol];
+    if (!currentPrice || !order.targetPrice) {
+      return null;
+    }
+
+    var triggering = order.orderDirection === "Buy Low"
+      ? currentPrice <= order.targetPrice
+      : currentPrice >= order.targetPrice;
+
+    return {
+      triggering: triggering,
+      currentPrice: currentPrice,
+    };
+  }
+
   async function loadOrders() {
     if (isFetching) {
       return;
@@ -873,11 +935,14 @@
         return;
       }
 
+      const normalized = rows.map(normalizeOrder);
+      await fetchSpotPrices(normalized);
+
       dataState = {
-        status: rows.length ? "success" : "empty",
+        status: normalized.length ? "success" : "empty",
         error: null,
         lastUpdatedAt: new Date(),
-        orders: rows.map(normalizeOrder),
+        orders: normalized,
       };
     } catch (error) {
       if (fetchId !== latestFetchId) {

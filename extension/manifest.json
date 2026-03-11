@@ -5,7 +5,8 @@
   "version": "0.1.0",
   "permissions": ["storage"],
   "host_permissions": [
-    "https://www.bybit.com/*"
+    "https://www.bybit.com/*",
+    "https://api.bybit.com/*"
   ],
   "content_scripts": [
     {
