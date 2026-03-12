@@ -447,38 +447,62 @@
 
       if (order.status === "Completed" && usdValue !== null) {
         cumulativeUsdtProfit += usdValue;
-        const dateLabel = order.settlementTime
-          ? order.settlementTime.toLocaleDateString()
-          : "-";
-        timelinePoints.push({
-          date: dateLabel,
-          profit: usdValue,
-          cumulative: cumulativeUsdtProfit,
-        });
       }
     }
 
     let totalTradingPnlUsdt = 0;
+    let runningUsdtProfit = 0;
+    let runningTradingPnlUsdt = 0;
 
     for (const order of sorted) {
+      if (order.status !== "Completed") continue;
+      
       const key = order.productName.split(" ")[0];
       const pairData = vwap[key];
-      if (!pairData) continue;
+      let addPoint = false;
 
-      const isConverted = order.status === "Completed"
-        && order.proceedsToken !== null
-        && order.proceedsToken !== order.investmentToken;
+      if (pairData) {
+        const isConverted = order.proceedsToken !== null && order.proceedsToken !== order.investmentToken;
 
-      if (isConverted && order.orderDirection === "Sell High" && order.targetPrice > 0) {
-        const convertedBuyVwap = pairData.convertedBuyVolume > 0
-          ? pairData.convertedBuyWeightedSum / pairData.convertedBuyVolume
-          : 0;
+        if (isConverted && order.orderDirection === "Sell High" && order.targetPrice > 0) {
+          const convertedBuyVwap = pairData.convertedBuyVolume > 0
+            ? pairData.convertedBuyWeightedSum / pairData.convertedBuyVolume
+            : 0;
 
-        if (convertedBuyVwap > 0) {
-          const gain = (order.targetPrice - convertedBuyVwap) * order.investmentAmount;
-          order.tradingGainUsdt = gain;
-          pairData.tradingPnlUsdt += gain;
-          totalTradingPnlUsdt += gain;
+          if (convertedBuyVwap > 0) {
+            const gain = (order.targetPrice - convertedBuyVwap) * order.investmentAmount;
+            order.tradingGainUsdt = gain;
+            pairData.tradingPnlUsdt += gain;
+            totalTradingPnlUsdt += gain;
+            runningTradingPnlUsdt += gain;
+            addPoint = true;
+          }
+        }
+      }
+
+      const usdValue = getApproximateUsdValue(order);
+      if (usdValue !== null) {
+        runningUsdtProfit += usdValue;
+        addPoint = true;
+      }
+
+      if (addPoint) {
+        const dateLabel = order.settlementTime
+          ? order.settlementTime.toLocaleDateString()
+          : "-";
+        
+        let existing = timelinePoints.length > 0 ? timelinePoints[timelinePoints.length - 1] : null;
+        if (existing && existing.date === dateLabel) {
+          existing.cumulative = runningUsdtProfit;
+          existing.cumulativeTrading = runningTradingPnlUsdt;
+        } else {
+          timelinePoints.push({
+            date: dateLabel,
+            profit: usdValue || 0,
+            cumulative: runningUsdtProfit,
+            tradingPnl: order.tradingGainUsdt || 0,
+            cumulativeTrading: runningTradingPnlUsdt,
+          });
         }
       }
     }
@@ -544,8 +568,10 @@
     const chartW = width - padding.left - padding.right;
     const chartH = height - padding.top - padding.bottom;
     const values = points.map(function getVal(p) { return p.cumulative; });
-    const minVal = Math.min(0, ...values);
-    const maxVal = Math.max(...values);
+    const tradingValues = points.map(function getVal(p) { return p.cumulativeTrading || 0; });
+    const allValues = values.concat(tradingValues);
+    const minVal = Math.min(0, ...allValues);
+    const maxVal = Math.max(...allValues);
     const range = maxVal - minVal || 1;
 
     function x(i) {
@@ -572,6 +598,22 @@
       })
       .join("");
 
+    const tradingPath = points
+      .map(function toCoord(p, i) {
+        return `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(p.cumulativeTrading || 0).toFixed(1)}`;
+      })
+      .join(" ");
+
+    const tradingAreaPath = tradingPath +
+      ` L${x(points.length - 1).toFixed(1)},${(padding.top + chartH).toFixed(1)}` +
+      ` L${x(0).toFixed(1)},${(padding.top + chartH).toFixed(1)} Z`;
+
+    const tradingDots = points
+      .map(function toDot(p, i) {
+        return `<circle cx="${x(i).toFixed(1)}" cy="${y(p.cumulativeTrading || 0).toFixed(1)}" r="3" fill="#60a5fa"/>`;
+      })
+      .join("");
+
     const ticks = 4;
     const gridLines = [];
     for (var t = 0; t <= ticks; t++) {
@@ -589,14 +631,21 @@
     return `<svg viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg" class="bybit-da-chart-svg">
       ${gridLines.join("")}
       <path d="${areaPath}" fill="url(#bybitDaGrad)" opacity="0.3"/>
+      <path d="${tradingAreaPath}" fill="url(#bybitTradingGrad)" opacity="0.3"/>
       <path d="${linePath}" fill="none" stroke="#34d399" stroke-width="2" stroke-linejoin="round"/>
+      <path d="${tradingPath}" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linejoin="round"/>
       ${dots}
+      ${tradingDots}
       <text x="${padding.left}" y="${height - 4}" fill="#94a3b8" font-size="9">${firstLabel}</text>
       <text x="${width - padding.right}" y="${height - 4}" fill="#94a3b8" font-size="9" text-anchor="end">${lastLabel}</text>
       <defs>
         <linearGradient id="bybitDaGrad" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stop-color="#34d399" stop-opacity="0.4"/>
           <stop offset="100%" stop-color="#34d399" stop-opacity="0"/>
+        </linearGradient>
+        <linearGradient id="bybitTradingGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#60a5fa" stop-opacity="0.4"/>
+          <stop offset="100%" stop-color="#60a5fa" stop-opacity="0"/>
         </linearGradient>
       </defs>
     </svg>`;
@@ -808,7 +857,13 @@
 
     const chartHtml = summary.timelinePoints.length > 1
       ? `<div class="bybit-da-overlay-card">
-          <div class="bybit-da-overlay-label">Cumulative Profit Timeline (USDT)</div>
+          <div class="bybit-da-overlay-label" style="display:flex; justify-content:space-between;">
+            <span>Cumulative Profit Timeline</span>
+            <div style="display:flex; gap:12px;">
+              <span style="color:#34d399;">■ Yield</span>
+              <span style="color:#60a5fa;">■ Trading</span>
+            </div>
+          </div>
           <div class="bybit-da-chart-wrap">${buildSvgTimeline(summary.timelinePoints, 440, 160)}</div>
         </div>`
       : "";
@@ -1132,11 +1187,13 @@
         }
       }
 
-      throw new Error("PROBE: " + results.join(" | "));
+      if (results.length > 0) {
+        throw new Error("Currently probing APIs: Check console for available products endpoint.");
+      }
     } catch (error) {
       productsData = {
-        status: "error",
-        error: error instanceof Error ? error.message : "Unknown error",
+        status: "idle",
+        error: null,
         items: [],
       };
     }
@@ -1165,20 +1222,18 @@
     });
 
     const PAGE_LIMIT = 50;
-    const MAX_PAGES = 20;
-
     try {
       const allRows = [];
       let endAt = null;
 
-      for (let page = 0; page < MAX_PAGES; page += 1) {
+      for (let page = 0; page < 50; page += 1) {
         const requestBody = {
           product_type: 2,
           only_effective_order: false,
           start_at: null,
           end_at: endAt,
           base_coin: null,
-          limit: PAGE_LIMIT,
+          limit: 10,
         };
 
         const response = await fetch(ORDERS_ENDPOINT, {
@@ -1212,7 +1267,7 @@
 
         allRows.push(...rows);
 
-        if (rows.length < PAGE_LIMIT) {
+        if (rows.length === 0) {
           break;
         }
 
@@ -1224,7 +1279,7 @@
           }
         }
 
-        if (!Number.isFinite(oldestCreatedAt)) {
+        if (!Number.isFinite(oldestCreatedAt) || rows.length < 10) {
           break;
         }
 
