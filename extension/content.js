@@ -2,10 +2,23 @@
   const OVERLAY_ID = "bybit-dual-asset-overlay-root";
   const STORAGE_KEY = "bybitDualAssetOverlayState";
   const ORDERS_ENDPOINT = "https://www.bybit.com/x-api/s1/byfi/dual-assets/orders";
+  const PRODUCTS_ENDPOINT = "https://www.bybit.com/x-api/s1/byfi/get-products-extra-info";
   const COIN_SYMBOLS = {
     2: "ETH",
     5: "USDT",
     18: "SOL",
+  };
+  const COIN_NAMES = {
+    1: "BTC", 2: "ETH", 4: "NEAR", 5: "USDT", 6: "LTC",
+    7: "AVAX", 8: "XLM", 18: "SOL", 19: "BNB", 20: "ADA",
+    21: "LINK", 29: "SUI", 34: "DOT", 50: "AAVE", 73: "PEPE",
+    75: "TON", 122: "BNB", 140: "DOGE", 145: "FIL", 174: "UNI",
+    212: "SHIB", 244: "OP", 329: "MATIC", 368: "ONDO", 396: "WLD",
+    416: "HBAR", 428: "POL", 451: "JUP", 463: "XRP", 469: "SEI",
+    480: "INJ", 503: "MANTA", 504: "TIA", 620: "BOME", 622: "BONK",
+    669: "NOT", 672: "IO", 673: "ZRO", 677: "STRK", 679: "FLOKI",
+    680: "ETHFI", 695: "TURBO", 706: "PEPE2", 715: "ARKM",
+    734: "MEW", 815: "EIGEN", 842: "AAVE", 858: "BNB", 1071: "TRUMP",
   };
   const DEFAULT_STATE = {
     top: 24,
@@ -61,6 +74,11 @@
     error: null,
     lastUpdatedAt: null,
     orders: [],
+  };
+  let productsData = {
+    status: "idle",
+    error: null,
+    items: [],
   };
 
   function clamp(value, min, max) {
@@ -600,9 +618,62 @@
     return '<div class="bybit-da-overlay-badge">Live Bybit orders loaded</div>';
   }
 
+  function buildProductsSectionHtml() {
+    if (productsData.status === "idle" || productsData.status === "loading") {
+      return `
+        <div class="bybit-da-products-section">
+          <div class="bybit-da-overlay-label bybit-da-section-label">Highest Available APRs</div>
+          <div class="bybit-da-overlay-card">
+            <div class="bybit-da-overlay-copy">Loading available products…</div>
+          </div>
+        </div>`;
+    }
+
+    if (productsData.status === "error") {
+      return `
+        <div class="bybit-da-products-section">
+          <div class="bybit-da-overlay-label bybit-da-section-label">Highest Available APRs</div>
+          <div class="bybit-da-overlay-card">
+            <div class="bybit-da-overlay-copy">Failed to load: ${escapeHtml(productsData.error || "Unknown error")}</div>
+          </div>
+        </div>`;
+    }
+
+    if (!productsData.items.length) {
+      return `
+        <div class="bybit-da-products-section">
+          <div class="bybit-da-overlay-label bybit-da-section-label">Highest Available APRs</div>
+          <div class="bybit-da-overlay-card">
+            <div class="bybit-da-overlay-copy">No products currently available.</div>
+          </div>
+        </div>`;
+    }
+
+    var cardsHtml = productsData.items.map(function renderProdCard(item) {
+      var expiryLabel = item.applyEndAt
+        ? "Expires " + formatDateTime(item.applyEndAt)
+        : "";
+      return `
+        <div class="bybit-da-overlay-card bybit-da-product-card">
+          <div class="bybit-da-product-duration">${escapeHtml(getDurationLabel(item.duration))}</div>
+          <div class="bybit-da-product-apr">${escapeHtml(formatPercent(item.maxApr))}</div>
+          <div class="bybit-da-product-pair">${escapeHtml(item.pair)}</div>
+          <div class="bybit-da-product-detail">${escapeHtml(item.direction)} @ ${escapeHtml(item.strikePrice)}</div>
+          ${expiryLabel ? '<div class="bybit-da-muted bybit-da-product-expiry">' + escapeHtml(expiryLabel) + "</div>" : ""}
+        </div>`;
+    }).join("");
+
+    return `
+      <div class="bybit-da-products-section">
+        <div class="bybit-da-overlay-label bybit-da-section-label">Highest Available APRs</div>
+        <div class="bybit-da-overlay-grid">${cardsHtml}</div>
+      </div>`;
+  }
+
   function renderLoadingState() {
     bodyEl.innerHTML = `
       ${getStateBadge()}
+      ${buildProductsSectionHtml()}
       <div class="bybit-da-overlay-card">
         <div class="bybit-da-overlay-label">Fetching</div>
         <div class="bybit-da-overlay-copy">Requesting <code>/x-api/s1/byfi/dual-assets/orders</code> with the page's authenticated browser session.</div>
@@ -613,6 +684,7 @@
   function renderErrorState() {
     bodyEl.innerHTML = `
       ${getStateBadge()}
+      ${buildProductsSectionHtml()}
       <div class="bybit-da-overlay-card">
         <div class="bybit-da-overlay-label">Request failed</div>
         <div class="bybit-da-overlay-copy">${escapeHtml(dataState.error || "Unknown error")}</div>
@@ -627,6 +699,7 @@
   function renderEmptyState() {
     bodyEl.innerHTML = `
       ${getStateBadge()}
+      ${buildProductsSectionHtml()}
       <div class="bybit-da-overlay-card">
         <div class="bybit-da-overlay-label">Result</div>
         <div class="bybit-da-overlay-copy">The endpoint responded successfully, but no Dual Asset rows were returned for the current request payload.</div>
@@ -742,6 +815,7 @@
 
     bodyEl.innerHTML = `
       ${getStateBadge()}
+      ${buildProductsSectionHtml()}
       <div class="bybit-da-overlay-meta">
         <span>Last refresh: ${escapeHtml(lastUpdatedLabel)}</span>
         <span>Orders: ${escapeHtml(String(dataState.orders.length))}</span>
@@ -1006,6 +1080,68 @@
     };
   }
 
+  function getDurationLabel(duration) {
+    var d = Number(duration);
+    if (d === 0) return "8h";
+    return d + "d";
+  }
+
+  function getCoinPairName(coinX, coinY) {
+    var base = COIN_NAMES[coinY] || ("#" + coinY);
+    var quote = COIN_NAMES[coinX] || ("#" + coinX);
+    return base + "-" + quote;
+  }
+
+  async function fetchAvailableProducts() {
+    productsData = { status: "loading", error: null, items: [] };
+
+    var candidates = [
+      { url: "https://www.bybit.com/x-api/s1/byfi/get-products-info", body: { product_type: 2 } },
+      { url: "https://www.bybit.com/x-api/s1/byfi/dual-assets/config", body: { product_type: 2 } },
+      { url: "https://www.bybit.com/x-api/s1/byfi/dual-asset-mining/config", body: {} },
+      { url: "https://www.bybit.com/x-api/s1/byfi/dual-asset-mining/products-info", body: { product_type: 2 } },
+      { url: "https://www.bybit.com/x-api/s1/byfi/get-dual-assets-config", body: { product_type: 2 } },
+      { url: "https://www.bybit.com/x-api/s1/byfi/get-products-extra-info", body: { product_type: 2, dual_assets_reqs: [] } },
+      { url: "https://www.bybit.com/x-api/s1/byfi/dual-assets/products-info", body: { product_type: 2 } },
+      { url: "https://www.bybit.com/x-api/s1/byfi/get-coins", body: {} },
+    ];
+
+    var results = [];
+
+    try {
+      for (var ci = 0; ci < candidates.length; ci++) {
+        var c = candidates[ci];
+        try {
+          var resp = await fetch(c.url, {
+            method: "POST",
+            credentials: "include",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(c.body),
+          });
+          var shortUrl = c.url.replace("https://www.bybit.com/x-api/s1/byfi/", "");
+          if (!resp.ok) {
+            results.push(shortUrl + "→HTTP" + resp.status);
+          } else {
+            var body = await resp.json();
+            var keys = body.result ? Object.keys(body.result).join(",") : Object.keys(body).join(",");
+            var hasReqs2 = (body.dual_assets_reqs || (body.result && body.result.dual_assets_reqs)) ? "HAS_REQS" : "";
+            results.push(shortUrl + "→" + (body.ret_code || 0) + "[" + keys + "]" + hasReqs2);
+          }
+        } catch (e2) {
+          results.push(c.url.split("/").pop() + "→ERR:" + e2.message);
+        }
+      }
+
+      throw new Error("PROBE: " + results.join(" | "));
+    } catch (error) {
+      productsData = {
+        status: "error",
+        error: error instanceof Error ? error.message : "Unknown error",
+        items: [],
+      };
+    }
+  }
+
   async function loadOrders() {
     if (isFetching) {
       return;
@@ -1021,6 +1157,12 @@
       error: null,
     };
     renderDataState();
+
+    fetchAvailableProducts().then(function onProductsDone() {
+      if (fetchId === latestFetchId) {
+        renderDataState();
+      }
+    });
 
     const PAGE_LIMIT = 50;
     const MAX_PAGES = 20;
