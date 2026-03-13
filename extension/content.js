@@ -919,12 +919,16 @@
       </div>
       <div class="bybit-da-overlay-grid">
         <div class="bybit-da-overlay-card">
-          <div class="bybit-da-overlay-label">Approx. Total USDT Profit</div>
+          <div class="bybit-da-overlay-label">Total Profit from Premium (Yield)</div>
           <div class="bybit-da-overlay-value">${escapeHtml(formatUsd(summary.totalUsdtProfit))}</div>
         </div>
         <div class="bybit-da-overlay-card">
-          <div class="bybit-da-overlay-label">Trading P&L</div>
+          <div class="bybit-da-overlay-label">Total Profit from Selling High (Trading)</div>
           <div class="bybit-da-overlay-value ${summary.totalTradingPnlUsdt >= 0 ? "is-positive" : "is-negative"}">${escapeHtml(formatUsd(summary.totalTradingPnlUsdt))}</div>
+        </div>
+        <div class="bybit-da-overlay-card">
+          <div class="bybit-da-overlay-label">Cumulative Total Profit</div>
+          <div class="bybit-da-overlay-value ${(summary.totalUsdtProfit + summary.totalTradingPnlUsdt) >= 0 ? "is-positive" : "is-negative"}">${escapeHtml(formatUsd(summary.totalUsdtProfit + summary.totalTradingPnlUsdt))}</div>
         </div>
         <div class="bybit-da-overlay-card">
           <div class="bybit-da-overlay-label">Win Rate</div>
