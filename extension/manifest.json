@@ -11,7 +11,8 @@
   "content_scripts": [
     {
       "matches": [
-        "https://www.bybit.com/user/assets/order/financial/financial-dual-asset-orders/dual-asset-order*"
+        "https://www.bybit.com/user/assets/order/financial/financial-dual-asset-orders/dual-asset-order*",
+        "https://www.bybit.com/en/earn/dual-asset-mining*"
       ],
       "js": ["content.js"],
       "css": ["content.css"],

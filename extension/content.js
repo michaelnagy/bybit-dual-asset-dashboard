@@ -69,6 +69,7 @@
   let isFetching = false;
   let latestFetchId = 0;
   let spotPrices = {};
+  let selectedVwapProduct = null;
   let dataState = {
     status: "loading",
     error: null,
@@ -395,14 +396,14 @@
       const key = order.productName.split(" ")[0];
       if (!vwap[key]) {
         vwap[key] = {
-          buyLowWeightedSum: 0,
-          buyLowVolume: 0,
-          sellHighWeightedSum: 0,
-          sellHighVolume: 0,
-          convertedBuyWeightedSum: 0,
-          convertedBuyVolume: 0,
-          convertedSellWeightedSum: 0,
-          convertedSellVolume: 0,
+          buyLowQuoteVolume: 0,
+          buyLowBaseVolume: 0,
+          sellHighQuoteVolume: 0,
+          sellHighBaseVolume: 0,
+          convertedBuyQuoteVolume: 0,
+          convertedBuyBaseVolume: 0,
+          convertedSellQuoteVolume: 0,
+          convertedSellBaseVolume: 0,
           tradingPnlUsdt: 0,
           aprSum: 0,
           aprCount: 0,
@@ -423,11 +424,11 @@
 
       if (order.targetPrice > 0) {
         if (order.orderDirection === "Buy Low") {
-          vwap[key].buyLowWeightedSum += order.targetPrice * order.investmentAmount;
-          vwap[key].buyLowVolume += order.investmentAmount;
+          vwap[key].buyLowQuoteVolume += order.investmentAmount;
+          vwap[key].buyLowBaseVolume += order.investmentAmount / order.targetPrice;
         } else {
-          vwap[key].sellHighWeightedSum += order.targetPrice * order.investmentAmount;
-          vwap[key].sellHighVolume += order.investmentAmount;
+          vwap[key].sellHighBaseVolume += order.investmentAmount;
+          vwap[key].sellHighQuoteVolume += order.investmentAmount * order.targetPrice;
         }
       }
 
@@ -437,11 +438,11 @@
 
       if (isConverted && order.targetPrice > 0) {
         if (order.orderDirection === "Buy Low") {
-          vwap[key].convertedBuyWeightedSum += order.targetPrice * order.investmentAmount;
-          vwap[key].convertedBuyVolume += order.investmentAmount;
+          vwap[key].convertedBuyQuoteVolume += order.investmentAmount;
+          vwap[key].convertedBuyBaseVolume += order.investmentAmount / order.targetPrice;
         } else {
-          vwap[key].convertedSellWeightedSum += order.targetPrice * order.investmentAmount;
-          vwap[key].convertedSellVolume += order.investmentAmount;
+          vwap[key].convertedSellBaseVolume += order.investmentAmount;
+          vwap[key].convertedSellQuoteVolume += order.investmentAmount * order.targetPrice;
         }
       }
 
@@ -453,6 +454,7 @@
     let totalTradingPnlUsdt = 0;
     let runningUsdtProfit = 0;
     let runningTradingPnlUsdt = 0;
+    const runningLedger = {};
 
     for (const order of sorted) {
       if (order.status !== "Completed") continue;
@@ -464,18 +466,31 @@
       if (pairData) {
         const isConverted = order.proceedsToken !== null && order.proceedsToken !== order.investmentToken;
 
-        if (isConverted && order.orderDirection === "Sell High" && order.targetPrice > 0) {
-          const convertedBuyVwap = pairData.convertedBuyVolume > 0
-            ? pairData.convertedBuyWeightedSum / pairData.convertedBuyVolume
-            : 0;
+        if (isConverted && order.targetPrice > 0) {
+          if (!runningLedger[key]) {
+            runningLedger[key] = { base: 0, quote: 0 };
+          }
+          const ledger = runningLedger[key];
 
-          if (convertedBuyVwap > 0) {
-            const gain = (order.targetPrice - convertedBuyVwap) * order.investmentAmount;
-            order.tradingGainUsdt = gain;
-            pairData.tradingPnlUsdt += gain;
-            totalTradingPnlUsdt += gain;
-            runningTradingPnlUsdt += gain;
-            addPoint = true;
+          if (order.orderDirection === "Buy Low") {
+            ledger.base += order.investmentAmount / order.targetPrice;
+            ledger.quote += order.investmentAmount;
+          } else if (order.orderDirection === "Sell High") {
+            if (ledger.base > 0) {
+              const costBasis = ledger.quote / ledger.base;
+              const gain = (order.targetPrice - costBasis) * order.investmentAmount;
+              order.tradingGainUsdt = gain;
+              pairData.tradingPnlUsdt += gain;
+              totalTradingPnlUsdt += gain;
+              runningTradingPnlUsdt += gain;
+
+              ledger.base -= order.investmentAmount;
+              ledger.quote -= order.investmentAmount * costBasis;
+              if (ledger.base < 0) ledger.base = 0;
+              if (ledger.quote < 0) ledger.quote = 0;
+
+              addPoint = true;
+            }
           }
         }
       }
@@ -495,6 +510,7 @@
         if (existing && existing.date === dateLabel) {
           existing.cumulative = runningUsdtProfit;
           existing.cumulativeTrading = runningTradingPnlUsdt;
+          existing.cumulativeTotal = runningUsdtProfit + runningTradingPnlUsdt;
         } else {
           timelinePoints.push({
             date: dateLabel,
@@ -502,6 +518,7 @@
             cumulative: runningUsdtProfit,
             tradingPnl: order.tradingGainUsdt || 0,
             cumulativeTrading: runningTradingPnlUsdt,
+            cumulativeTotal: runningUsdtProfit + runningTradingPnlUsdt,
           });
         }
       }
@@ -534,12 +551,14 @@
       const data = vwap[product];
       return {
         product,
-        buyLowVwap: data.buyLowVolume > 0 ? data.buyLowWeightedSum / data.buyLowVolume : 0,
-        sellHighVwap: data.sellHighVolume > 0 ? data.sellHighWeightedSum / data.sellHighVolume : 0,
-        convertedBuyVwap: data.convertedBuyVolume > 0
-          ? data.convertedBuyWeightedSum / data.convertedBuyVolume : 0,
-        convertedSellVwap: data.convertedSellVolume > 0
-          ? data.convertedSellWeightedSum / data.convertedSellVolume : 0,
+        buyLowVwap: data.buyLowBaseVolume > 0
+          ? data.buyLowQuoteVolume / data.buyLowBaseVolume : 0,
+        sellHighVwap: data.sellHighBaseVolume > 0
+          ? data.sellHighQuoteVolume / data.sellHighBaseVolume : 0,
+        convertedBuyVwap: data.convertedBuyBaseVolume > 0
+          ? data.convertedBuyQuoteVolume / data.convertedBuyBaseVolume : 0,
+        convertedSellVwap: data.convertedSellBaseVolume > 0
+          ? data.convertedSellQuoteVolume / data.convertedSellBaseVolume : 0,
         tradingPnlUsdt: data.tradingPnlUsdt,
         avgApr: data.aprCount > 0 ? data.aprSum / data.aprCount : 0,
         avgSettledApr: data.settledAprCount > 0 ? data.settledAprSum / data.settledAprCount : 0,
@@ -569,7 +588,8 @@
     const chartH = height - padding.top - padding.bottom;
     const values = points.map(function getVal(p) { return p.cumulative; });
     const tradingValues = points.map(function getVal(p) { return p.cumulativeTrading || 0; });
-    const allValues = values.concat(tradingValues);
+    const totalValues = points.map(function getVal(p) { return p.cumulativeTotal || 0; });
+    const allValues = values.concat(tradingValues).concat(totalValues);
     const minVal = Math.min(0, ...allValues);
     const maxVal = Math.max(...allValues);
     const range = maxVal - minVal || 1;
@@ -614,6 +634,22 @@
       })
       .join("");
 
+    const totalPath = points
+      .map(function toCoord(p, i) {
+        return `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(p.cumulativeTotal || 0).toFixed(1)}`;
+      })
+      .join(" ");
+
+    const totalAreaPath = totalPath +
+      ` L${x(points.length - 1).toFixed(1)},${(padding.top + chartH).toFixed(1)}` +
+      ` L${x(0).toFixed(1)},${(padding.top + chartH).toFixed(1)} Z`;
+
+    const totalDots = points
+      .map(function toDot(p, i) {
+        return `<circle cx="${x(i).toFixed(1)}" cy="${y(p.cumulativeTotal || 0).toFixed(1)}" r="3" fill="#f59e0b"/>`;
+      })
+      .join("");
+
     const ticks = 4;
     const gridLines = [];
     for (var t = 0; t <= ticks; t++) {
@@ -630,10 +666,13 @@
 
     return `<svg viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg" class="bybit-da-chart-svg">
       ${gridLines.join("")}
+      <path d="${totalAreaPath}" fill="url(#bybitTotalGrad)" opacity="0.3"/>
       <path d="${areaPath}" fill="url(#bybitDaGrad)" opacity="0.3"/>
       <path d="${tradingAreaPath}" fill="url(#bybitTradingGrad)" opacity="0.3"/>
+      <path d="${totalPath}" fill="none" stroke="#f59e0b" stroke-width="2" stroke-linejoin="round"/>
       <path d="${linePath}" fill="none" stroke="#34d399" stroke-width="2" stroke-linejoin="round"/>
       <path d="${tradingPath}" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linejoin="round"/>
+      ${totalDots}
       ${dots}
       ${tradingDots}
       <text x="${padding.left}" y="${height - 4}" fill="#94a3b8" font-size="9">${firstLabel}</text>
@@ -646,6 +685,10 @@
         <linearGradient id="bybitTradingGrad" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stop-color="#60a5fa" stop-opacity="0.4"/>
           <stop offset="100%" stop-color="#60a5fa" stop-opacity="0"/>
+        </linearGradient>
+        <linearGradient id="bybitTotalGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.4"/>
+          <stop offset="100%" stop-color="#f59e0b" stop-opacity="0"/>
         </linearGradient>
       </defs>
     </svg>`;
@@ -807,53 +850,51 @@
       })
       .join("");
 
-    const vwapHtml = summary.avgTargetPrices.length
-      ? summary.avgTargetPrices
-          .map(function renderVwap(tp) {
-            return `
-              <div class="bybit-da-overlay-card bybit-da-vwap-card">
-                <div class="bybit-da-overlay-label">${escapeHtml(tp.product)}</div>
-                <div class="bybit-da-vwap-row">
-                  <div>
-                    <div class="bybit-da-vwap-dir">Buy Low VWAP</div>
-                    <div class="bybit-da-vwap-price is-buy">${tp.buyLowVwap > 0 ? escapeHtml(formatNumber(tp.buyLowVwap, { minimumFractionDigits: 2, maximumFractionDigits: 4 })) : "-"}</div>
-                  </div>
-                  <div>
-                    <div class="bybit-da-vwap-dir">Sell High VWAP</div>
-                    <div class="bybit-da-vwap-price is-sell">${tp.sellHighVwap > 0 ? escapeHtml(formatNumber(tp.sellHighVwap, { minimumFractionDigits: 2, maximumFractionDigits: 4 })) : "-"}</div>
-                  </div>
-                </div>
-                <div class="bybit-da-vwap-row" style="margin-top:6px">
-                  <div>
-                    <div class="bybit-da-vwap-dir">Converted Buy VWAP</div>
-                    <div class="bybit-da-vwap-price is-buy">${tp.convertedBuyVwap > 0 ? escapeHtml(formatNumber(tp.convertedBuyVwap, { minimumFractionDigits: 2, maximumFractionDigits: 4 })) : "-"}</div>
-                  </div>
-                  <div>
-                    <div class="bybit-da-vwap-dir">Converted Sell VWAP</div>
-                    <div class="bybit-da-vwap-price is-sell">${tp.convertedSellVwap > 0 ? escapeHtml(formatNumber(tp.convertedSellVwap, { minimumFractionDigits: 2, maximumFractionDigits: 4 })) : "-"}</div>
-                  </div>
-                </div>
-                <div class="bybit-da-vwap-row" style="margin-top:6px">
-                  <div>
-                    <div class="bybit-da-vwap-dir">Trading P&L</div>
-                    <div class="bybit-da-vwap-price ${tp.tradingPnlUsdt >= 0 ? "is-positive" : "is-negative"}">${escapeHtml(formatUsd(tp.tradingPnlUsdt))}</div>
-                  </div>
-                </div>
-                <div class="bybit-da-vwap-row" style="margin-top:6px">
-                  <div>
-                    <div class="bybit-da-vwap-dir">Avg APR</div>
-                    <div class="bybit-da-vwap-apr">${escapeHtml(formatPercent(tp.avgApr))}</div>
-                  </div>
-                  <div>
-                    <div class="bybit-da-vwap-dir">Avg Settled APR</div>
-                    <div class="bybit-da-vwap-apr">${escapeHtml(formatPercent(tp.avgSettledApr))}</div>
-                  </div>
-                </div>
-              </div>
-            `;
-          })
-          .join("")
-      : "";
+    if (summary.avgTargetPrices.length > 0 && !selectedVwapProduct) {
+      selectedVwapProduct = summary.avgTargetPrices[0].product;
+    }
+
+    let vwapHtml = "";
+    if (summary.avgTargetPrices.length > 0) {
+      const targetTp = summary.avgTargetPrices.find(function(tp) { return tp.product === selectedVwapProduct; }) || summary.avgTargetPrices[0];
+      
+      const tabsHtml = summary.avgTargetPrices.map(function(tp) {
+        const isActive = tp.product === targetTp.product;
+        return '<button type="button" class="bybit-da-vwap-tab' + (isActive ? ' is-active' : '') + '" data-vwap-product="' + escapeHtml(tp.product) + '">' + escapeHtml(tp.product.split("-")[0]) + '</button>';
+      }).join("");
+
+      vwapHtml = `
+        <div class="bybit-da-vwap-header">
+          <div class="bybit-da-overlay-label bybit-da-section-label" style="margin:0">Cost Basis & Trading</div>
+          <div class="bybit-da-vwap-tabs">${tabsHtml}</div>
+        </div>
+        <div class="bybit-da-overlay-card bybit-da-vwap-card">
+          <div class="bybit-da-vwap-row">
+            <div>
+              <div class="bybit-da-vwap-dir">Converted Buy VWAP</div>
+              <div class="bybit-da-vwap-price is-buy">${targetTp.convertedBuyVwap > 0 ? escapeHtml(formatNumber(targetTp.convertedBuyVwap, { minimumFractionDigits: 2, maximumFractionDigits: 4 })) : "-"}</div>
+            </div>
+            <div>
+              <div class="bybit-da-vwap-dir">Trading P&L</div>
+              <div class="bybit-da-vwap-price ${targetTp.tradingPnlUsdt >= 0 ? "is-positive" : "is-negative"}">${escapeHtml(formatUsd(targetTp.tradingPnlUsdt))}</div>
+            </div>
+          </div>
+          <div class="bybit-da-vwap-row" style="margin-top:6px">
+            <div>
+              <div class="bybit-da-vwap-dir">Avg APR</div>
+              <div class="bybit-da-vwap-apr">${escapeHtml(formatPercent(targetTp.avgApr))}</div>
+            </div>
+            <div>
+              <div class="bybit-da-vwap-dir">Avg Settled APR</div>
+              <div class="bybit-da-vwap-apr">${escapeHtml(formatPercent(targetTp.avgSettledApr))}</div>
+            </div>
+          </div>
+          <div class="bybit-da-vwap-tip-inner">
+            💡 Set your <strong>Sell High</strong> target above <strong>${targetTp.convertedBuyVwap > 0 ? escapeHtml(formatNumber(targetTp.convertedBuyVwap, { minimumFractionDigits: 2, maximumFractionDigits: 4 })) : "the cost basis"}</strong> to profit from the spread on top of the premium.
+          </div>
+        </div>
+      `;
+    }
 
     const chartHtml = summary.timelinePoints.length > 1
       ? `<div class="bybit-da-overlay-card">
@@ -862,6 +903,7 @@
             <div style="display:flex; gap:12px;">
               <span style="color:#34d399;">■ Yield</span>
               <span style="color:#60a5fa;">■ Trading</span>
+              <span style="color:#f59e0b;">■ Total</span>
             </div>
           </div>
           <div class="bybit-da-chart-wrap">${buildSvgTimeline(summary.timelinePoints, 440, 160)}</div>
@@ -902,7 +944,7 @@
           <div class="bybit-da-muted" style="margin-top:4px">${escapeHtml(formatPercent(summary.avgSettledApr))}</div>
         </div>
       </div>
-      ${vwapHtml ? '<div class="bybit-da-overlay-label bybit-da-section-label">VWAP Target Prices</div><div class="bybit-da-overlay-grid">' + vwapHtml + "</div>" : ""}
+      ${vwapHtml}
       ${chartHtml}
       <div class="bybit-da-overlay-card">
         <div class="bybit-da-overlay-label">Dual Asset Orders</div>
@@ -1323,6 +1365,14 @@
   resizeHandleEl.addEventListener("pointerdown", startResize);
   window.addEventListener("resize", function handleResize() {
     applyState(state);
+  });
+  
+  bodyEl.addEventListener("click", function handleVwapTabClick(e) {
+    var tab = e.target && e.target.closest("[data-vwap-product]");
+    if (tab) {
+      selectedVwapProduct = tab.getAttribute("data-vwap-product");
+      renderDataState();
+    }
   });
 
   function tickCountdowns() {

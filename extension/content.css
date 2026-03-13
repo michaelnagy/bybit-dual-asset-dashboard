@@ -396,3 +396,69 @@
 .is-negative {
   color: #f87171;
 }
+
+.bybit-da-vwap-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 2px;
+  margin-bottom: 8px;
+}
+
+.bybit-da-vwap-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.bybit-da-vwap-tab {
+  background: rgba(15, 23, 42, 0.6);
+  color: #94a3b8;
+  border: 1px solid rgba(100, 116, 139, 0.3);
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.bybit-da-vwap-tab:hover {
+  background: rgba(30, 41, 59, 0.8);
+  color: #e2e8f0;
+}
+
+.bybit-da-vwap-tab.is-active {
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+  border-color: rgba(59, 130, 246, 0.4);
+}
+
+.bybit-da-vwap-tip {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-top: 8px;
+  background: rgba(59, 130, 246, 0.08);
+  border-left: 3px solid #3b82f6;
+  padding: 8px 10px;
+  border-radius: 0 4px 4px 0;
+  line-height: 1.4;
+}
+
+.bybit-da-vwap-tip strong {
+  color: #e2e8f0;
+}
+
+.bybit-da-vwap-tip-inner {
+  font-size: 12.5px;
+  color: #94a3b8;
+  margin-top: 10px;
+  background: rgba(59, 130, 246, 0.08);
+  border-left: 3px solid #3b82f6;
+  padding: 8px 10px;
+  border-radius: 0 4px 4px 0;
+  line-height: 1.5;
+}
+
+.bybit-da-vwap-tip-inner strong {
+  color: #e2e8f0;
+}
