@@ -27,6 +27,7 @@
     width: 480,
     height: 420,
     minimized: false,
+    activeTab: "dual-asset",
   };
 
   if (document.getElementById(OVERLAY_ID)) {
@@ -44,13 +45,17 @@
   windowEl.innerHTML = `
     <div class="bybit-da-overlay-header">
       <div class="bybit-da-overlay-title-wrap">
-        <div class="bybit-da-overlay-title">Dual Asset Intelligence</div>
-        <div class="bybit-da-overlay-subtitle">Live Bybit Dual Asset orders overlay</div>
+        <div class="bybit-da-overlay-title">Bybit Intelligence</div>
+        <div class="bybit-da-overlay-subtitle">Live Bybit portfolio overlay</div>
       </div>
       <div class="bybit-da-overlay-actions">
         <button type="button" class="bybit-da-overlay-button" data-action="refresh" aria-label="Refresh data">Refresh</button>
         <button type="button" class="bybit-da-overlay-button" data-action="minimize" aria-label="Minimize overlay">_</button>
       </div>
+    </div>
+    <div class="bybit-da-tab-bar">
+      <button type="button" class="bybit-da-tab-btn" data-tab="dual-asset">Dual Asset</button>
+      <button type="button" class="bybit-da-tab-btn" data-tab="options">Options</button>
     </div>
     <div class="bybit-da-overlay-body"></div>
     <div class="bybit-da-overlay-resize-handle" aria-hidden="true"></div>
@@ -64,10 +69,19 @@
   const refreshButton = windowEl.querySelector('[data-action="refresh"]');
   const resizeHandleEl = windowEl.querySelector(".bybit-da-overlay-resize-handle");
   const bodyEl = windowEl.querySelector(".bybit-da-overlay-body");
+  const tabBarEl = windowEl.querySelector(".bybit-da-tab-bar");
 
   let state = { ...DEFAULT_STATE };
-  let isFetching = false;
-  let latestFetchId = 0;
+  let isFetchingDualAsset = false;
+  let latestDualAssetFetchId = 0;
+  let isFetchingOptions = false;
+  let latestOptionsFetchId = 0;
+
+  function setRefreshButtonLoading() {
+    if (refreshButton) {
+      refreshButton.disabled = isFetchingDualAsset || isFetchingOptions;
+    }
+  }
   let spotPrices = {};
   let selectedVwapProduct = null;
   let dataState = {
@@ -76,10 +90,12 @@
     lastUpdatedAt: null,
     orders: [],
   };
-  let productsData = {
-    status: "idle",
+  let optionsDataState = {
+    status: "loading",
     error: null,
-    items: [],
+    lastUpdatedAt: null,
+    orders: [],
+    debugMsg: ""
   };
 
   function clamp(value, min, max) {
@@ -698,74 +714,22 @@
     if (dataState.status === "loading") {
       return '<div class="bybit-da-overlay-badge is-loading">Loading live Bybit orders...</div>';
     }
-
     if (dataState.status === "error") {
-      return '<div class="bybit-da-overlay-badge is-error">Unable to fetch Bybit orders</div>';
+      return `<div class="bybit-da-overlay-badge is-error">Error loading orders</div>`;
     }
-
     if (dataState.status === "empty") {
-      return '<div class="bybit-da-overlay-badge is-empty">No Dual Asset orders returned</div>';
+      return `<div class="bybit-da-overlay-badge is-empty">No Active/Settling Dual Asset Orders</div>`;
     }
-
-    return '<div class="bybit-da-overlay-badge">Live Bybit orders loaded</div>';
-  }
-
-  function buildProductsSectionHtml() {
-    if (productsData.status === "idle" || productsData.status === "loading") {
-      return `
-        <div class="bybit-da-products-section">
-          <div class="bybit-da-overlay-label bybit-da-section-label">Highest Available APRs</div>
-          <div class="bybit-da-overlay-card">
-            <div class="bybit-da-overlay-copy">Loading available products…</div>
-          </div>
-        </div>`;
+    if (dataState.status === "success") {
+      const activeCount = dataState.orders.filter(function(o) { return o.status === "Active"; }).length;
+      return `<div class="bybit-da-overlay-badge">Tracking ${activeCount} active order${activeCount === 1 ? "" : "s"}</div>`;
     }
-
-    if (productsData.status === "error") {
-      return `
-        <div class="bybit-da-products-section">
-          <div class="bybit-da-overlay-label bybit-da-section-label">Highest Available APRs</div>
-          <div class="bybit-da-overlay-card">
-            <div class="bybit-da-overlay-copy">Failed to load: ${escapeHtml(productsData.error || "Unknown error")}</div>
-          </div>
-        </div>`;
-    }
-
-    if (!productsData.items.length) {
-      return `
-        <div class="bybit-da-products-section">
-          <div class="bybit-da-overlay-label bybit-da-section-label">Highest Available APRs</div>
-          <div class="bybit-da-overlay-card">
-            <div class="bybit-da-overlay-copy">No products currently available.</div>
-          </div>
-        </div>`;
-    }
-
-    var cardsHtml = productsData.items.map(function renderProdCard(item) {
-      var expiryLabel = item.applyEndAt
-        ? "Expires " + formatDateTime(item.applyEndAt)
-        : "";
-      return `
-        <div class="bybit-da-overlay-card bybit-da-product-card">
-          <div class="bybit-da-product-duration">${escapeHtml(getDurationLabel(item.duration))}</div>
-          <div class="bybit-da-product-apr">${escapeHtml(formatPercent(item.maxApr))}</div>
-          <div class="bybit-da-product-pair">${escapeHtml(item.pair)}</div>
-          <div class="bybit-da-product-detail">${escapeHtml(item.direction)} @ ${escapeHtml(item.strikePrice)}</div>
-          ${expiryLabel ? '<div class="bybit-da-muted bybit-da-product-expiry">' + escapeHtml(expiryLabel) + "</div>" : ""}
-        </div>`;
-    }).join("");
-
-    return `
-      <div class="bybit-da-products-section">
-        <div class="bybit-da-overlay-label bybit-da-section-label">Highest Available APRs</div>
-        <div class="bybit-da-overlay-grid">${cardsHtml}</div>
-      </div>`;
+    return "";
   }
 
   function renderLoadingState() {
     bodyEl.innerHTML = `
       ${getStateBadge()}
-      ${buildProductsSectionHtml()}
       <div class="bybit-da-overlay-card">
         <div class="bybit-da-overlay-label">Fetching</div>
         <div class="bybit-da-overlay-copy">Requesting <code>/x-api/s1/byfi/dual-assets/orders</code> with the page's authenticated browser session.</div>
@@ -912,7 +876,6 @@
 
     bodyEl.innerHTML = `
       ${getStateBadge()}
-      ${buildProductsSectionHtml()}
       <div class="bybit-da-overlay-meta">
         <span>Last refresh: ${escapeHtml(lastUpdatedLabel)}</span>
         <span>Orders: ${escapeHtml(String(dataState.orders.length))}</span>
@@ -977,6 +940,11 @@
   }
 
   function renderDataState() {
+    if (state.activeTab === "options") {
+      renderOptionsState();
+      return;
+    }
+
     if (dataState.status === "loading") {
       renderLoadingState();
       return;
@@ -993,6 +961,111 @@
     }
 
     renderSuccessState();
+  }
+
+  function renderOptionsState() {
+    console.log("Bybit overlay: renderOptionsState() called. Status:", optionsDataState.status, "Orders:", optionsDataState.orders);
+    
+    if (optionsDataState.status === "loading") {
+      bodyEl.innerHTML = `
+        <div class="bybit-da-overlay-badge is-loading">Loading live Options orders...</div>
+        <div class="bybit-da-overlay-card">
+          <div class="bybit-da-overlay-label">Fetching</div>
+          <div class="bybit-da-overlay-copy">Requesting <code>/v5/queryUserOrderHistory</code> with the page's authenticated browser session.</div>
+        </div>
+      `;
+      return;
+    }
+
+    if (optionsDataState.status === "error") {
+      bodyEl.innerHTML = `
+        <div class="bybit-da-overlay-badge is-error">Unable to fetch Options orders</div>
+        <div class="bybit-da-overlay-card">
+          <div class="bybit-da-overlay-label">Request failed</div>
+          <div class="bybit-da-overlay-copy">${escapeHtml(optionsDataState.error || "Unknown error")}</div>
+        </div>
+      `;
+      return;
+    }
+
+    if (optionsDataState.status === "empty") {
+      bodyEl.innerHTML = `
+        <div class="bybit-da-overlay-badge is-empty">No Options orders returned</div>
+        <div class="bybit-da-overlay-card">
+          <div class="bybit-da-overlay-label">Result</div>
+          <div class="bybit-da-overlay-copy">No closed Options orders found for this currency in the last 180 days.</div>
+        </div>
+        <div class="bybit-da-overlay-card">
+          <div class="bybit-da-overlay-label">Debug Payload</div>
+          <div class="bybit-da-overlay-copy" style="font-family: monospace; font-size: 10px; max-height: 150px; overflow-y: auto;">
+            ${escapeHtml(optionsDataState.debugMsg)}
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+    let totalNetPnl = 0;
+    for (let i = 0; i < optionsDataState.orders.length; i++) {
+      totalNetPnl += (optionsDataState.orders[i].netPnl || 0);
+    }
+
+    const lastUpdatedLabel = optionsDataState.lastUpdatedAt ? formatDateTime(optionsDataState.lastUpdatedAt) : "-";
+
+    const rowsHtml = optionsDataState.orders.map(function renderOptionRow(o) {
+      const isPositive = o.netPnl >= 0;
+      const orderDate = o.parsedDate;
+      
+      const pnlDisplay = o.netPnl !== 0 ? formatUsd(o.netPnl) : "--";
+      
+      return `
+        <tr>
+          <td class="bybit-da-muted">${escapeHtml(formatDateTime(orderDate))}</td>
+          <td>${escapeHtml(o.symbol)}</td>
+          <td>
+            <span class="bybit-da-pill ${o.side === 'Buy' ? 'is-buy' : 'is-sell'}">${escapeHtml(o.side)} ${escapeHtml(o.action || "")}</span>
+          </td>
+          <td>${escapeHtml(formatAmount(o.cumExecQty, "", 4))}</td>
+          <td>${escapeHtml(formatAmount(o.orderAvgPrice, "", 4))}</td>
+          <td class="bybit-da-muted">${escapeHtml(formatUsd(o.cumExecFee || o.cashFlow))}</td>
+          <td class="${isPositive && o.netPnl !== 0 ? 'is-positive' : o.netPnl !== 0 ? 'is-negative' : ''}">${escapeHtml(pnlDisplay)}</td>
+        </tr>
+      `;
+    }).join("");
+
+    bodyEl.innerHTML = `
+      <div class="bybit-da-overlay-badge">Live Options loaded</div>
+      <div class="bybit-da-overlay-meta" style="margin-top: 12px">
+        <span>Last refresh: ${escapeHtml(lastUpdatedLabel)}</span>
+        <span>Orders (Filled/Closed): ${escapeHtml(String(optionsDataState.orders.length))}</span>
+      </div>
+      <div class="bybit-da-overlay-grid">
+        <div class="bybit-da-overlay-card" style="grid-column: 1 / -1;">
+          <div class="bybit-da-overlay-label">True Total P&L (Net of Fees)</div>
+          <div class="bybit-da-overlay-value ${totalNetPnl >= 0 ? 'is-positive' : 'is-negative'}">${escapeHtml(formatUsd(totalNetPnl))}</div>
+          <div class="bybit-da-muted" style="margin-top: 4px;">Sum of all filled Options PnL in the period. (Bypasses Bybit UI double-fee counting bug)</div>
+        </div>
+      </div>
+      <div class="bybit-da-overlay-card">
+        <div class="bybit-da-overlay-label">Closed Options Records</div>
+        <div class="bybit-da-overlay-table-wrap">
+          <table class="bybit-da-overlay-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Contract</th>
+                <th>Operation</th>
+                <th>Qty</th>
+                <th>Avg Price</th>
+                <th>Fees</th>
+                <th>Net P&L</th>
+              </tr>
+            </thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+        </div>
+      </div>
+    `;
   }
 
   async function readState() {
@@ -1193,79 +1266,21 @@
     return base + "-" + quote;
   }
 
-  async function fetchAvailableProducts() {
-    productsData = { status: "loading", error: null, items: [] };
-
-    var candidates = [
-      { url: "https://www.bybit.com/x-api/s1/byfi/get-products-info", body: { product_type: 2 } },
-      { url: "https://www.bybit.com/x-api/s1/byfi/dual-assets/config", body: { product_type: 2 } },
-      { url: "https://www.bybit.com/x-api/s1/byfi/dual-asset-mining/config", body: {} },
-      { url: "https://www.bybit.com/x-api/s1/byfi/dual-asset-mining/products-info", body: { product_type: 2 } },
-      { url: "https://www.bybit.com/x-api/s1/byfi/get-dual-assets-config", body: { product_type: 2 } },
-      { url: "https://www.bybit.com/x-api/s1/byfi/get-products-extra-info", body: { product_type: 2, dual_assets_reqs: [] } },
-      { url: "https://www.bybit.com/x-api/s1/byfi/dual-assets/products-info", body: { product_type: 2 } },
-      { url: "https://www.bybit.com/x-api/s1/byfi/get-coins", body: {} },
-    ];
-
-    var results = [];
-
-    try {
-      for (var ci = 0; ci < candidates.length; ci++) {
-        var c = candidates[ci];
-        try {
-          var resp = await fetch(c.url, {
-            method: "POST",
-            credentials: "include",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(c.body),
-          });
-          var shortUrl = c.url.replace("https://www.bybit.com/x-api/s1/byfi/", "");
-          if (!resp.ok) {
-            results.push(shortUrl + "→HTTP" + resp.status);
-          } else {
-            var body = await resp.json();
-            var keys = body.result ? Object.keys(body.result).join(",") : Object.keys(body).join(",");
-            var hasReqs2 = (body.dual_assets_reqs || (body.result && body.result.dual_assets_reqs)) ? "HAS_REQS" : "";
-            results.push(shortUrl + "→" + (body.ret_code || 0) + "[" + keys + "]" + hasReqs2);
-          }
-        } catch (e2) {
-          results.push(c.url.split("/").pop() + "→ERR:" + e2.message);
-        }
-      }
-
-      if (results.length > 0) {
-        throw new Error("Currently probing APIs: Check console for available products endpoint.");
-      }
-    } catch (error) {
-      productsData = {
-        status: "idle",
-        error: null,
-        items: [],
-      };
-    }
-  }
-
   async function loadOrders() {
-    if (isFetching) {
+    if (isFetchingDualAsset) {
       return;
     }
 
-    isFetching = true;
-    latestFetchId += 1;
-    const fetchId = latestFetchId;
-    refreshButton.disabled = true;
+    isFetchingDualAsset = true;
+    latestDualAssetFetchId += 1;
+    const fetchId = latestDualAssetFetchId;
+    setRefreshButtonLoading();
     dataState = {
       ...dataState,
       status: "loading",
       error: null,
     };
     renderDataState();
-
-    fetchAvailableProducts().then(function onProductsDone() {
-      if (fetchId === latestFetchId) {
-        renderDataState();
-      }
-    });
 
     const PAGE_LIMIT = 50;
     try {
@@ -1307,7 +1322,7 @@
             ? payload.result.dual_assets_orders
             : [];
 
-        if (fetchId !== latestFetchId) {
+        if (fetchId !== latestDualAssetFetchId) {
           return;
         }
 
@@ -1342,7 +1357,7 @@
         orders: normalized,
       };
     } catch (error) {
-      if (fetchId !== latestFetchId) {
+      if (fetchId !== latestDualAssetFetchId) {
         return;
       }
 
@@ -1352,10 +1367,148 @@
         error: error instanceof Error ? error.message : "Unknown fetch error",
       };
     } finally {
-      if (fetchId === latestFetchId) {
-        isFetching = false;
-        refreshButton.disabled = false;
+      if (fetchId === latestDualAssetFetchId) {
+        isFetchingDualAsset = false;
+        setRefreshButtonLoading();
         renderDataState();
+      }
+    }
+  }
+
+  async function loadOptionsHistory() {
+    if (isFetchingOptions) {
+      return;
+    }
+
+    isFetchingOptions = true;
+    latestOptionsFetchId += 1;
+    const fetchId = latestOptionsFetchId;
+    setRefreshButtonLoading();
+    
+    optionsDataState = {
+      ...optionsDataState,
+      status: "loading",
+      error: null,
+    };
+    renderDataState();
+
+    try {
+      console.log("Bybit overlay: loadOptionsHistory() started");
+      const allRows = [];
+      const endTime = Date.now();
+      const startTime = endTime - (180 * 24 * 60 * 60 * 1000);
+      
+      let cursor = "0";
+
+      for (let page = 0; page < 30; page += 1) {
+        const requestBody = {
+          category: "option",
+          baseCoin: "",
+          orderType: 0,
+          orderStatus: 0,
+          limit: 20,
+          direction: "",
+          startTime: startTime,
+          endTime: endTime,
+          pageIndex: 0,
+          cursor: cursor,
+          action: 0,
+          side: 0
+        };
+
+        console.log(`Bybit overlay: Fetching Options page ${page} with cursor ${cursor}`);
+        const response = await fetch("https://www.bybit.com/x-api/unified/option/v5/queryUserOrderHistory", {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(requestBody),
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status} ${response.statusText}`);
+        }
+
+        const payload = await response.json();
+        if (payload.retCode !== 0) {
+          throw new Error(payload.retMsg || `Bybit error ${payload.retCode}`);
+        }
+
+        // Store the raw result object for debugging
+        if (page === 0) {
+          optionsDataState.debugMsg = `Raw result keys: ${JSON.stringify(Object.keys(payload.result || {}))}. payload.result.result length: ${(payload.result && payload.result.result) ? payload.result.result.length : 'undefined'}`;
+        }
+
+        const rows = payload.result && (payload.result.list || payload.result.result) ? (payload.result.list || payload.result.result) : [];
+        console.log(`Bybit overlay: Options page ${page} returned ${rows.length} rows`);
+
+        if (fetchId !== latestOptionsFetchId) {
+          return;
+        }
+
+        allRows.push(...rows);
+
+        const nextCursor = payload.result ? (payload.result.nextPageCursor || payload.result.cursor) : null;
+        if (!payload.result || rows.length === 0 || !nextCursor || nextCursor === cursor || nextCursor === "0") {
+          console.log(`Bybit overlay: Options pagination finished.`);
+          break;
+        }
+        cursor = nextCursor;
+      }
+
+      console.log("Bybit overlay: Total Options rows fetched:", allRows.length);
+      const closedOrders = [];
+      for (let i = 0; i < allRows.length; i++) {
+        const row = allRows[i];
+        
+        // Options orders use 'orderTime'
+        const rawDate = row.orderTime || row.createdTime || row.updatedTime;
+        const netPnlVal = row.orderPNL ? Number(row.orderPNL) : 0;
+        
+        row.parsedDate = new Date(Number(rawDate));
+        row.netPnl = netPnlVal;
+        
+        // Push all retrieved options orders into the table
+        closedOrders.push(row);
+      }
+
+      optionsDataState = {
+        status: closedOrders.length > 0 ? "success" : "empty",
+        error: null,
+        lastUpdatedAt: new Date(),
+        orders: closedOrders,
+        debugMsg: optionsDataState.debugMsg // Retain the debug message set during page 0
+      };
+      console.log("Bybit overlay: optionsDataState resolved to", optionsDataState.status, closedOrders.length, "orders");
+    } catch (error) {
+      console.error("Bybit overlay: loadOptionsHistory error:", error);
+      if (fetchId !== latestOptionsFetchId) {
+        return;
+      }
+
+      optionsDataState = {
+        ...optionsDataState,
+        status: "error",
+        error: error instanceof Error ? error.message : "Unknown fetch error",
+      };
+    } finally {
+      if (fetchId === latestOptionsFetchId) {
+        isFetchingOptions = false;
+        setRefreshButtonLoading();
+        renderDataState();
+      }
+    }
+  }
+
+  function updateTabUI() {
+    if (!tabBarEl) return;
+    const btns = tabBarEl.querySelectorAll(".bybit-da-tab-btn");
+    for (let i = 0; i < btns.length; i++) {
+      if (btns[i].getAttribute("data-tab") === state.activeTab) {
+        btns[i].classList.add("is-active");
+      } else {
+        btns[i].classList.remove("is-active");
       }
     }
   }
@@ -1363,7 +1516,32 @@
   minimizeButton.addEventListener("click", function toggleMinimize() {
     persistAndRender({ minimized: !state.minimized });
   });
-  refreshButton.addEventListener("click", loadOrders);
+  
+  refreshButton.addEventListener("click", function handleRefresh() {
+    if (state.activeTab === "options") {
+      loadOptionsHistory();
+    } else {
+      loadOrders();
+    }
+  });
+
+  if (tabBarEl) {
+    tabBarEl.addEventListener("click", function onTabClick(e) {
+      if (e.target.matches(".bybit-da-tab-btn")) {
+        const newTab = e.target.getAttribute("data-tab");
+        if (state.activeTab !== newTab) {
+          persistAndRender({ activeTab: newTab });
+          updateTabUI();
+          renderDataState();
+          if (newTab === "options" && optionsDataState.status === "loading") {
+            loadOptionsHistory();
+          } else if (newTab === "dual-asset" && dataState.status === "loading") {
+            loadOrders();
+          }
+        }
+      }
+    });
+  }
 
   headerEl.addEventListener("pointerdown", startDrag);
   resizeHandleEl.addEventListener("pointerdown", startResize);
@@ -1404,7 +1582,9 @@
   readState().then(function mountOverlay(savedState) {
     state = { ...DEFAULT_STATE, ...(savedState || {}) };
     applyState(state);
+    updateTabUI();
     renderDataState();
     loadOrders();
+    loadOptionsHistory();
   });
 })();
