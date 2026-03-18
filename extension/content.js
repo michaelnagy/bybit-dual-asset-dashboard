@@ -3,6 +3,85 @@
   const STORAGE_KEY = "bybitDualAssetOverlayState";
   const ORDERS_ENDPOINT = "https://www.bybit.com/x-api/s1/byfi/dual-assets/orders";
   const PRODUCTS_ENDPOINT = "https://www.bybit.com/x-api/s1/byfi/get-products-extra-info";
+  const OPTIONS_HISTORY_ENDPOINT = "https://www.bybit.com/x-api/unified/option/v5/queryUserOrderHistory";
+  const OPTIONS_POSITION_ENDPOINT_CANDIDATES = [
+    {
+      id: "webQueryPositionList",
+      url: "https://www.bybit.com/x-api/unified/option/v5/queryPositionList",
+      method: "POST",
+      initialCursor: "0",
+      buildBody: function buildBody(cursor) {
+        return {
+          category: "option",
+          baseCoin: "",
+          limit: 200,
+          cursor: cursor || "0",
+        };
+      },
+    },
+    {
+      id: "webQueryPositionInfo",
+      url: "https://www.bybit.com/x-api/unified/option/v5/queryPositionInfo",
+      method: "POST",
+      initialCursor: "0",
+      buildBody: function buildBody(cursor) {
+        return {
+          category: "option",
+          baseCoin: "",
+          limit: 200,
+          cursor: cursor || "0",
+        };
+      },
+    },
+    {
+      id: "webUnifiedPrivatePositionList",
+      url: "https://www.bybit.com/x-api/unified/v5/private/position/list",
+      method: "GET",
+      initialCursor: "",
+      buildParams: function buildParams(cursor) {
+        const params = new URLSearchParams({
+          category: "option",
+          limit: "200",
+        });
+        if (cursor) {
+          params.set("cursor", cursor);
+        }
+        return params;
+      },
+    },
+    {
+      id: "webV5PositionList",
+      url: "https://www.bybit.com/x-api/v5/position/list",
+      method: "GET",
+      initialCursor: "",
+      buildParams: function buildParams(cursor) {
+        const params = new URLSearchParams({
+          category: "option",
+          limit: "200",
+        });
+        if (cursor) {
+          params.set("cursor", cursor);
+        }
+        return params;
+      },
+    },
+    {
+      id: "apiV5PositionList",
+      url: "https://api.bybit.com/v5/position/list",
+      method: "GET",
+      initialCursor: "",
+      buildParams: function buildParams(cursor) {
+        const params = new URLSearchParams({
+          category: "option",
+          limit: "200",
+        });
+        if (cursor) {
+          params.set("cursor", cursor);
+        }
+        return params;
+      },
+    },
+  ];
   const COIN_SYMBOLS = {
     2: "ETH",
     5: "USDT",
@@ -76,6 +155,7 @@
   let latestDualAssetFetchId = 0;
   let isFetchingOptions = false;
   let latestOptionsFetchId = 0;
+  let optionPositionsEndpointConfig = null;
 
   function setRefreshButtonLoading() {
     if (refreshButton) {
@@ -93,9 +173,19 @@
   let optionsDataState = {
     status: "loading",
     error: null,
+    isRefreshing: false,
     lastUpdatedAt: null,
     orders: [],
-    debugMsg: ""
+    positions: [],
+    openSummary: createEmptyOptionsOpenSummary(),
+    ordersStatus: "loading",
+    positionsStatus: "loading",
+    ordersStale: false,
+    positionsStale: false,
+    ordersError: null,
+    positionsError: null,
+    historyDebugMsg: "",
+    positionsDebugMsg: "",
   };
 
   function clamp(value, min, max) {
@@ -122,6 +212,19 @@
     }
 
     return parsed / scale;
+  }
+
+  function parseFiniteNumber(value) {
+    if (value === null || value === undefined || value === "") {
+      return null;
+    }
+
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+      return null;
+    }
+
+    return parsed;
   }
 
   function parseUnixSeconds(value) {
@@ -296,7 +399,6 @@
       if (proceedsToken === investmentToken) {
         profitAmount = proceeds - investmentAmount;
         profitToken = investmentToken;
-        winOrLoss = profitAmount >= 0 ? "Win" : "Loss";
         principalForApr = investmentAmount;
       } else if (targetPrice > 0) {
         const convertedPrincipal =
@@ -305,9 +407,9 @@
             : investmentAmount / targetPrice;
         profitAmount = proceeds - convertedPrincipal;
         profitToken = proceedsToken;
-        winOrLoss = "Loss";
         principalForApr = convertedPrincipal;
       }
+      winOrLoss = proceedsToken === pair.quoteAsset ? "Win" : "Loss";
     }
 
     let realApr = null;
@@ -592,6 +694,71 @@
       avgTargetPrices,
       timelinePoints,
     };
+  }
+
+  function createEmptyOptionsOpenSummary() {
+    return {
+      callOpenSize: 0,
+      putOpenSize: 0,
+      openPositionCount: 0,
+      callPositionCount: 0,
+      putPositionCount: 0,
+      unknownPositionCount: 0,
+    };
+  }
+
+  function parseOptionTypeFromSymbol(symbol) {
+    const normalizedSymbol = String(symbol || "").trim().toUpperCase();
+    if (normalizedSymbol.endsWith("-C")) {
+      return "CALL";
+    }
+    if (normalizedSymbol.endsWith("-P")) {
+      return "PUT";
+    }
+    return null;
+  }
+
+  function normalizeOpenOptionPosition(row) {
+    const size = parseFiniteNumber(row && row.size);
+    if (size === null || size <= 0) {
+      return null;
+    }
+
+    const symbol = String((row && row.symbol) || "");
+
+    return {
+      symbol,
+      side: String((row && row.side) || ""),
+      size,
+      positionValue: parseFiniteNumber(row && row.positionValue),
+      avgPrice: parseFiniteNumber(row && row.avgPrice),
+      optionType: parseOptionTypeFromSymbol(symbol),
+    };
+  }
+
+  function buildOpenOptionsSummary(positions) {
+    const summary = createEmptyOptionsOpenSummary();
+
+    for (let i = 0; i < positions.length; i += 1) {
+      const position = positions[i];
+      summary.openPositionCount += 1;
+
+      if (position.optionType === "CALL") {
+        summary.callOpenSize += position.size;
+        summary.callPositionCount += 1;
+      } else if (position.optionType === "PUT") {
+        summary.putOpenSize += position.size;
+        summary.putPositionCount += 1;
+      } else {
+        summary.unknownPositionCount += 1;
+      }
+    }
+
+    return summary;
+  }
+
+  function formatPositionCount(count) {
+    return `${count} position${count === 1 ? "" : "s"}`;
   }
 
   function buildSvgTimeline(points, width, height) {
@@ -964,43 +1131,35 @@
   }
 
   function renderOptionsState() {
-    console.log("Bybit overlay: renderOptionsState() called. Status:", optionsDataState.status, "Orders:", optionsDataState.orders);
-    
-    if (optionsDataState.status === "loading") {
+    console.log("Bybit overlay: renderOptionsState() called. Status:", optionsDataState.status, "Closed Orders:", optionsDataState.orders, "Open Positions:", optionsDataState.positions);
+
+    if (optionsDataState.status === "loading" && !optionsDataState.isRefreshing) {
       bodyEl.innerHTML = `
-        <div class="bybit-da-overlay-badge is-loading">Loading live Options orders...</div>
+        <div class="bybit-da-overlay-badge is-loading">Loading live Options data...</div>
         <div class="bybit-da-overlay-card">
           <div class="bybit-da-overlay-label">Fetching</div>
-          <div class="bybit-da-overlay-copy">Requesting <code>/v5/queryUserOrderHistory</code> with the page's authenticated browser session.</div>
+          <div class="bybit-da-overlay-copy">Requesting closed order history plus current open option positions with the page's authenticated browser session.</div>
         </div>
       `;
       return;
     }
 
     if (optionsDataState.status === "error") {
+      const debugLines = [optionsDataState.positionsDebugMsg, optionsDataState.historyDebugMsg]
+        .filter(Boolean)
+        .join("\n");
+
       bodyEl.innerHTML = `
-        <div class="bybit-da-overlay-badge is-error">Unable to fetch Options orders</div>
+        <div class="bybit-da-overlay-badge is-error">Unable to fetch Options data</div>
         <div class="bybit-da-overlay-card">
           <div class="bybit-da-overlay-label">Request failed</div>
           <div class="bybit-da-overlay-copy">${escapeHtml(optionsDataState.error || "Unknown error")}</div>
         </div>
-      `;
-      return;
-    }
-
-    if (optionsDataState.status === "empty") {
-      bodyEl.innerHTML = `
-        <div class="bybit-da-overlay-badge is-empty">No Options orders returned</div>
-        <div class="bybit-da-overlay-card">
-          <div class="bybit-da-overlay-label">Result</div>
-          <div class="bybit-da-overlay-copy">No closed Options orders found for this currency in the last 180 days.</div>
-        </div>
+        ${debugLines ? `
         <div class="bybit-da-overlay-card">
           <div class="bybit-da-overlay-label">Debug Payload</div>
-          <div class="bybit-da-overlay-copy" style="font-family: monospace; font-size: 10px; max-height: 150px; overflow-y: auto;">
-            ${escapeHtml(optionsDataState.debugMsg)}
-          </div>
-        </div>
+          <div class="bybit-da-overlay-copy" style="font-family: monospace; font-size: 10px; max-height: 150px; overflow-y: auto;">${escapeHtml(debugLines)}</div>
+        </div>` : ""}
       `;
       return;
     }
@@ -1010,14 +1169,25 @@
       totalNetPnl += (optionsDataState.orders[i].netPnl || 0);
     }
 
+    const openSummary = optionsDataState.openSummary || createEmptyOptionsOpenSummary();
     const lastUpdatedLabel = optionsDataState.lastUpdatedAt ? formatDateTime(optionsDataState.lastUpdatedAt) : "-";
+    const hasPartialError = optionsDataState.positionsError || optionsDataState.ordersError;
+    const badgeText = optionsDataState.isRefreshing
+      ? "Refreshing Options data..."
+      : hasPartialError
+        ? "Live Options loaded with partial data"
+        : "Live Options loaded";
+    const badgeClass = optionsDataState.isRefreshing
+      ? " is-loading"
+      : hasPartialError
+        ? " is-empty"
+        : "";
 
     const rowsHtml = optionsDataState.orders.map(function renderOptionRow(o) {
       const isPositive = o.netPnl >= 0;
       const orderDate = o.parsedDate;
-      
       const pnlDisplay = o.netPnl !== 0 ? formatUsd(o.netPnl) : "--";
-      
+
       return `
         <tr>
           <td class="bybit-da-muted">${escapeHtml(formatDateTime(orderDate))}</td>
@@ -1033,38 +1203,135 @@
       `;
     }).join("");
 
+    let openCallValue = "-";
+    let openPutValue = "-";
+    let openPositionsValue = "-";
+    let openCallCopy = "Unable to load open CALL positions.";
+    let openPutCopy = "Unable to load open PUT positions.";
+    let openPositionsCopy = "Unable to load open option positions.";
+
+    if (optionsDataState.positionsStatus !== "error") {
+      openCallValue = formatAmount(openSummary.callOpenSize, "", 4);
+      openPutValue = formatAmount(openSummary.putOpenSize, "", 4);
+      openPositionsValue = String(openSummary.openPositionCount);
+
+      if (optionsDataState.positionsStatus === "empty") {
+        openCallCopy = "No open CALL positions returned.";
+        openPutCopy = "No open PUT positions returned.";
+        openPositionsCopy = "No open option positions returned.";
+      } else {
+        openCallCopy = `Tracked across ${formatPositionCount(openSummary.callPositionCount)}.`;
+        openPutCopy = `Tracked across ${formatPositionCount(openSummary.putPositionCount)}.`;
+        openPositionsCopy = openSummary.unknownPositionCount > 0
+          ? `${formatPositionCount(openSummary.openPositionCount)} total. ${openSummary.unknownPositionCount} symbol(s) could not be classified as CALL or PUT.`
+          : `${formatPositionCount(openSummary.openPositionCount)} across all open option positions.`;
+      }
+    }
+
+    let totalPnlValue = "-";
+    let totalPnlClass = "";
+    let totalPnlCopy = "Closed options history unavailable.";
+
+    if (optionsDataState.ordersStatus !== "error") {
+      totalPnlValue = formatUsd(totalNetPnl);
+      totalPnlClass = optionsDataState.ordersStatus === "success"
+        ? (totalNetPnl >= 0 ? "is-positive" : "is-negative")
+        : "";
+      totalPnlCopy = optionsDataState.ordersStatus === "empty"
+        ? "No closed options orders found in the last 180 days."
+        : "Sum of all filled Options PnL in the period. (Bypasses Bybit UI double-fee counting bug)";
+    }
+
+    const positionsIssueHtml = optionsDataState.positionsError
+      ? `
+        <div class="bybit-da-overlay-card" style="margin-top: 12px;">
+          <div class="bybit-da-overlay-label">${optionsDataState.positionsStale ? "Open Positions Refresh Failed" : "Open Positions Unavailable"}</div>
+          <div class="bybit-da-overlay-copy">${escapeHtml(optionsDataState.positionsError || "Unable to load open option positions.")}${optionsDataState.positionsStale ? " Showing the last successful snapshot." : ""}</div>
+          ${optionsDataState.positionsDebugMsg ? `<div class="bybit-da-muted" style="margin-top: 8px; font-family: monospace; font-size: 10px;">${escapeHtml(optionsDataState.positionsDebugMsg)}</div>` : ""}
+        </div>
+      `
+      : "";
+
+    let historySectionHtml = "";
+    if (optionsDataState.ordersStatus === "error" && !optionsDataState.ordersStale) {
+      historySectionHtml = `
+        <div class="bybit-da-overlay-card" style="margin-top: 12px;">
+          <div class="bybit-da-overlay-label">Closed Options Records</div>
+          <div class="bybit-da-overlay-copy">${escapeHtml(optionsDataState.ordersError || "Unable to load closed options history.")}</div>
+          ${optionsDataState.historyDebugMsg ? `<div class="bybit-da-muted" style="margin-top: 8px; font-family: monospace; font-size: 10px;">${escapeHtml(optionsDataState.historyDebugMsg)}</div>` : ""}
+        </div>
+      `;
+    } else if (optionsDataState.ordersStatus === "empty") {
+      historySectionHtml = `
+        <div class="bybit-da-overlay-card" style="margin-top: 12px;">
+          <div class="bybit-da-overlay-label">Closed Options Records</div>
+          <div class="bybit-da-overlay-copy">No closed options orders were returned for the last 180 days.</div>
+          ${optionsDataState.historyDebugMsg ? `<div class="bybit-da-muted" style="margin-top: 8px; font-family: monospace; font-size: 10px;">${escapeHtml(optionsDataState.historyDebugMsg)}</div>` : ""}
+        </div>
+      `;
+    } else {
+      historySectionHtml = `
+        <div class="bybit-da-overlay-card" style="margin-top: 12px;">
+          <div class="bybit-da-overlay-label">Closed Options Records</div>
+          ${optionsDataState.ordersError ? `<div class="bybit-da-overlay-copy" style="margin-bottom: 10px;">${escapeHtml(optionsDataState.ordersError)}${optionsDataState.ordersStale ? " Showing the last successful snapshot." : ""}</div>` : ""}
+          <div class="bybit-da-overlay-table-wrap">
+            <table class="bybit-da-overlay-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Contract</th>
+                  <th>Operation</th>
+                  <th>Qty</th>
+                  <th>Avg Price</th>
+                  <th>Fees</th>
+                  <th>Net P&L</th>
+                </tr>
+              </thead>
+              <tbody>${rowsHtml}</tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    const openPositionsMeta = optionsDataState.positionsStatus === "error" && !optionsDataState.positionsStale
+      ? "Open Positions: unavailable"
+      : `Open Positions: ${openSummary.openPositionCount}`;
+    const closedOrdersMeta = optionsDataState.ordersStatus === "error"
+      ? "Orders (Filled/Closed): unavailable"
+      : `Orders (Filled/Closed): ${optionsDataState.orders.length}`;
+
     bodyEl.innerHTML = `
-      <div class="bybit-da-overlay-badge">Live Options loaded</div>
+      <div class="bybit-da-overlay-badge${badgeClass}">${badgeText}</div>
       <div class="bybit-da-overlay-meta" style="margin-top: 12px">
         <span>Last refresh: ${escapeHtml(lastUpdatedLabel)}</span>
-        <span>Orders (Filled/Closed): ${escapeHtml(String(optionsDataState.orders.length))}</span>
+        <span>${escapeHtml(openPositionsMeta)}</span>
+        <span>${escapeHtml(closedOrdersMeta)}</span>
       </div>
       <div class="bybit-da-overlay-grid">
-        <div class="bybit-da-overlay-card" style="grid-column: 1 / -1;">
+        <div class="bybit-da-overlay-card">
+          <div class="bybit-da-overlay-label">Open CALL Volume</div>
+          <div class="bybit-da-overlay-value">${escapeHtml(openCallValue)}</div>
+          <div class="bybit-da-muted" style="margin-top: 4px;">${escapeHtml(openCallCopy)}</div>
+        </div>
+        <div class="bybit-da-overlay-card">
+          <div class="bybit-da-overlay-label">Open PUT Volume</div>
+          <div class="bybit-da-overlay-value">${escapeHtml(openPutValue)}</div>
+          <div class="bybit-da-muted" style="margin-top: 4px;">${escapeHtml(openPutCopy)}</div>
+        </div>
+        <div class="bybit-da-overlay-card">
+          <div class="bybit-da-overlay-label">Open Positions</div>
+          <div class="bybit-da-overlay-value">${escapeHtml(openPositionsValue)}</div>
+          <div class="bybit-da-muted" style="margin-top: 4px;">${escapeHtml(openPositionsCopy)}</div>
+        </div>
+      </div>
+      <div class="bybit-da-overlay-card" style="margin-top: 12px;">
           <div class="bybit-da-overlay-label">True Total P&L (Net of Fees)</div>
-          <div class="bybit-da-overlay-value ${totalNetPnl >= 0 ? 'is-positive' : 'is-negative'}">${escapeHtml(formatUsd(totalNetPnl))}</div>
-          <div class="bybit-da-muted" style="margin-top: 4px;">Sum of all filled Options PnL in the period. (Bypasses Bybit UI double-fee counting bug)</div>
-        </div>
+          <div class="bybit-da-overlay-value ${totalPnlClass}">${escapeHtml(totalPnlValue)}</div>
+          <div class="bybit-da-muted" style="margin-top: 4px;">${escapeHtml(totalPnlCopy)}</div>
       </div>
-      <div class="bybit-da-overlay-card">
-        <div class="bybit-da-overlay-label">Closed Options Records</div>
-        <div class="bybit-da-overlay-table-wrap">
-          <table class="bybit-da-overlay-table">
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Contract</th>
-                <th>Operation</th>
-                <th>Qty</th>
-                <th>Avg Price</th>
-                <th>Fees</th>
-                <th>Net P&L</th>
-              </tr>
-            </thead>
-            <tbody>${rowsHtml}</tbody>
-          </table>
-        </div>
-      </div>
+      ${positionsIssueHtml}
+      ${historySectionHtml}
     `;
   }
 
@@ -1375,114 +1642,334 @@
     }
   }
 
-  async function loadOptionsHistory() {
+  async function fetchClosedOptionsOrders() {
+    console.log("Bybit overlay: fetchClosedOptionsOrders() started");
+    const allRows = [];
+    const endTime = Date.now();
+    const startTime = endTime - (180 * 24 * 60 * 60 * 1000);
+    let cursor = "0";
+    let historyDebugMsg = "";
+
+    for (let page = 0; page < 30; page += 1) {
+      const requestBody = {
+        category: "option",
+        baseCoin: "",
+        orderType: 0,
+        orderStatus: 0,
+        limit: 20,
+        direction: "",
+        startTime: startTime,
+        endTime: endTime,
+        pageIndex: 0,
+        cursor: cursor,
+        action: 0,
+        side: 0,
+      };
+
+      console.log(`Bybit overlay: Fetching closed Options page ${page} with cursor ${cursor}`);
+      const response = await fetch(OPTIONS_HISTORY_ENDPOINT, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} ${response.statusText}`);
+      }
+
+      const payload = await response.json();
+      if (payload.retCode !== 0) {
+        throw new Error(payload.retMsg || `Bybit error ${payload.retCode}`);
+      }
+
+      const result = payload.result || {};
+      const rows = Array.isArray(result.list)
+        ? result.list
+        : Array.isArray(result.result)
+          ? result.result
+          : [];
+
+      if (page === 0) {
+        historyDebugMsg = `history keys: ${JSON.stringify(Object.keys(result))}; first page rows: ${rows.length}`;
+      }
+
+      console.log(`Bybit overlay: Closed Options page ${page} returned ${rows.length} rows`);
+      allRows.push(...rows);
+
+      const nextCursor = result.nextPageCursor || result.cursor || null;
+      if (rows.length === 0 || !nextCursor || nextCursor === cursor || nextCursor === "0") {
+        console.log("Bybit overlay: Closed Options pagination finished.");
+        break;
+      }
+
+      cursor = nextCursor;
+    }
+
+    const closedOrders = [];
+    for (let i = 0; i < allRows.length; i += 1) {
+      const row = allRows[i];
+      const rawDate = row.orderTime || row.createdTime || row.updatedTime;
+      const netPnlVal = row.orderPNL ? Number(row.orderPNL) : 0;
+
+      row.parsedDate = new Date(Number(rawDate));
+      row.netPnl = netPnlVal;
+      closedOrders.push(row);
+    }
+
+    console.log("Bybit overlay: Total closed Options rows fetched:", closedOrders.length);
+    return {
+      orders: closedOrders,
+      debugMsg: historyDebugMsg,
+    };
+  }
+
+  async function fetchOpenOptionsPositionsFromCandidate(candidate) {
+    console.log("Bybit overlay: Trying open Options endpoint", candidate.id, candidate.url);
+    const allRows = [];
+    let cursor = candidate.initialCursor || "";
+    let positionsDebugMsg = "";
+
+    for (let page = 0; page < 10; page += 1) {
+      let requestUrl = candidate.url;
+      const requestInit = {
+        method: candidate.method,
+        credentials: "include",
+      };
+
+      if (candidate.method === "POST") {
+        requestInit.headers = {
+          "content-type": "application/json",
+        };
+        requestInit.body = JSON.stringify(candidate.buildBody(cursor));
+      } else {
+        const params = candidate.buildParams(cursor);
+        const query = params.toString();
+        if (query) {
+          requestUrl += `?${query}`;
+        }
+      }
+
+      const response = await fetch(requestUrl, requestInit);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} ${response.statusText}`);
+      }
+
+      const payload = await response.json();
+      if (payload.retCode !== 0) {
+        throw new Error(payload.retMsg || `Bybit error ${payload.retCode}`);
+      }
+
+      const result = payload.result || {};
+      const hasExpectedRowsShape = Array.isArray(result.list) || Array.isArray(result.result);
+      if (!hasExpectedRowsShape) {
+        throw new Error("Unexpected options positions payload shape.");
+      }
+
+      const rows = Array.isArray(result.list)
+        ? result.list
+        : Array.isArray(result.result)
+          ? result.result
+          : [];
+
+      if (page === 0) {
+        positionsDebugMsg = `${candidate.id}: result keys ${JSON.stringify(Object.keys(result))}; first page rows: ${rows.length}`;
+      }
+
+      console.log(`Bybit overlay: Open Options page ${page} via ${candidate.id} returned ${rows.length} rows`);
+      allRows.push(...rows);
+
+      const nextCursor = result.nextPageCursor || result.cursor || null;
+      if (rows.length === 0 || !nextCursor || nextCursor === cursor || nextCursor === "0") {
+        break;
+      }
+
+      cursor = nextCursor;
+    }
+
+    const positions = [];
+    if (allRows.length > 0 && (!allRows[0] || allRows[0].symbol === undefined || allRows[0].size === undefined)) {
+      throw new Error("Unexpected options position row shape.");
+    }
+
+    for (let i = 0; i < allRows.length; i += 1) {
+      const normalizedPosition = normalizeOpenOptionPosition(allRows[i]);
+      if (normalizedPosition) {
+        positions.push(normalizedPosition);
+      }
+    }
+
+    return {
+      positions: positions,
+      debugMsg: `${positionsDebugMsg}; normalized positions: ${positions.length}`,
+      isConfident: resultLooksLikeOptionsPositionPayload(candidate, allRows, positionsDebugMsg),
+    };
+  }
+
+  function resultLooksLikeOptionsPositionPayload(candidate, allRows, positionsDebugMsg) {
+    if (allRows.length > 0) {
+      return true;
+    }
+
+    return candidate.id === "apiV5PositionList"
+      || candidate.id === "webV5PositionList"
+      || /"category"/.test(positionsDebugMsg);
+  }
+
+  async function fetchOpenOptionsPositions() {
+    const candidates = optionPositionsEndpointConfig
+      ? [optionPositionsEndpointConfig].concat(
+        OPTIONS_POSITION_ENDPOINT_CANDIDATES.filter(function filterCandidate(candidate) {
+          return candidate.id !== optionPositionsEndpointConfig.id;
+        })
+      )
+      : OPTIONS_POSITION_ENDPOINT_CANDIDATES.slice();
+    const errors = [];
+
+    for (let i = 0; i < candidates.length; i += 1) {
+      const candidate = candidates[i];
+
+      try {
+        const result = await fetchOpenOptionsPositionsFromCandidate(candidate);
+
+        if (result.positions.length > 0 || result.isConfident) {
+          if (result.isConfident) {
+            optionPositionsEndpointConfig = candidate;
+          }
+          console.log("Bybit overlay: Open Options endpoint resolved to", candidate.id);
+          return result;
+        }
+
+        errors.push(`${candidate.id}: empty payload without endpoint confidence`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown fetch error";
+        errors.push(`${candidate.id}: ${message}`);
+      }
+    }
+
+    optionPositionsEndpointConfig = null;
+    throw new Error(errors.join(" | ") || "Unable to resolve an open options endpoint.");
+  }
+
+  async function loadOptionsData() {
     if (isFetchingOptions) {
       return;
     }
+
+    const previousOptionsDataState = optionsDataState;
+    const hadPreviousOrdersSnapshot = previousOptionsDataState.ordersStatus === "success" || previousOptionsDataState.ordersStatus === "empty";
+    const hadPreviousPositionsSnapshot = previousOptionsDataState.positionsStatus === "success" || previousOptionsDataState.positionsStatus === "empty";
 
     isFetchingOptions = true;
     latestOptionsFetchId += 1;
     const fetchId = latestOptionsFetchId;
     setRefreshButtonLoading();
-    
+
     optionsDataState = {
       ...optionsDataState,
-      status: "loading",
+      status: hadPreviousOrdersSnapshot || hadPreviousPositionsSnapshot ? "success" : "loading",
       error: null,
+      isRefreshing: true,
+      ordersError: null,
+      positionsError: null,
+      ordersStale: false,
+      positionsStale: false,
     };
     renderDataState();
 
     try {
-      console.log("Bybit overlay: loadOptionsHistory() started");
-      const allRows = [];
-      const endTime = Date.now();
-      const startTime = endTime - (180 * 24 * 60 * 60 * 1000);
-      
-      let cursor = "0";
+      console.log("Bybit overlay: loadOptionsData() started");
+      const [historyResult, positionsResult] = await Promise.allSettled([
+        fetchClosedOptionsOrders(),
+        fetchOpenOptionsPositions(),
+      ]);
 
-      for (let page = 0; page < 30; page += 1) {
-        const requestBody = {
-          category: "option",
-          baseCoin: "",
-          orderType: 0,
-          orderStatus: 0,
-          limit: 20,
-          direction: "",
-          startTime: startTime,
-          endTime: endTime,
-          pageIndex: 0,
-          cursor: cursor,
-          action: 0,
-          side: 0
-        };
-
-        console.log(`Bybit overlay: Fetching Options page ${page} with cursor ${cursor}`);
-        const response = await fetch("https://www.bybit.com/x-api/unified/option/v5/queryUserOrderHistory", {
-          method: "POST",
-          credentials: "include",
-          headers: {
-            "content-type": "application/json",
-          },
-          body: JSON.stringify(requestBody),
-        });
-
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status} ${response.statusText}`);
-        }
-
-        const payload = await response.json();
-        if (payload.retCode !== 0) {
-          throw new Error(payload.retMsg || `Bybit error ${payload.retCode}`);
-        }
-
-        // Store the raw result object for debugging
-        if (page === 0) {
-          optionsDataState.debugMsg = `Raw result keys: ${JSON.stringify(Object.keys(payload.result || {}))}. payload.result.result length: ${(payload.result && payload.result.result) ? payload.result.result.length : 'undefined'}`;
-        }
-
-        const rows = payload.result && (payload.result.list || payload.result.result) ? (payload.result.list || payload.result.result) : [];
-        console.log(`Bybit overlay: Options page ${page} returned ${rows.length} rows`);
-
-        if (fetchId !== latestOptionsFetchId) {
-          return;
-        }
-
-        allRows.push(...rows);
-
-        const nextCursor = payload.result ? (payload.result.nextPageCursor || payload.result.cursor) : null;
-        if (!payload.result || rows.length === 0 || !nextCursor || nextCursor === cursor || nextCursor === "0") {
-          console.log(`Bybit overlay: Options pagination finished.`);
-          break;
-        }
-        cursor = nextCursor;
+      if (fetchId !== latestOptionsFetchId) {
+        return;
       }
 
-      console.log("Bybit overlay: Total Options rows fetched:", allRows.length);
-      const closedOrders = [];
-      for (let i = 0; i < allRows.length; i++) {
-        const row = allRows[i];
-        
-        // Options orders use 'orderTime'
-        const rawDate = row.orderTime || row.createdTime || row.updatedTime;
-        const netPnlVal = row.orderPNL ? Number(row.orderPNL) : 0;
-        
-        row.parsedDate = new Date(Number(rawDate));
-        row.netPnl = netPnlVal;
-        
-        // Push all retrieved options orders into the table
-        closedOrders.push(row);
-      }
-
-      optionsDataState = {
-        status: closedOrders.length > 0 ? "success" : "empty",
+      const nextState = {
+        status: "success",
         error: null,
-        lastUpdatedAt: new Date(),
-        orders: closedOrders,
-        debugMsg: optionsDataState.debugMsg // Retain the debug message set during page 0
+        isRefreshing: false,
+        lastUpdatedAt: previousOptionsDataState.lastUpdatedAt,
+        orders: hadPreviousOrdersSnapshot ? previousOptionsDataState.orders : [],
+        positions: hadPreviousPositionsSnapshot ? previousOptionsDataState.positions : [],
+        openSummary: hadPreviousPositionsSnapshot
+          ? previousOptionsDataState.openSummary
+          : createEmptyOptionsOpenSummary(),
+        ordersStatus: hadPreviousOrdersSnapshot ? previousOptionsDataState.ordersStatus : "error",
+        positionsStatus: hadPreviousPositionsSnapshot ? previousOptionsDataState.positionsStatus : "error",
+        ordersStale: false,
+        positionsStale: false,
+        ordersError: null,
+        positionsError: null,
+        historyDebugMsg: previousOptionsDataState.historyDebugMsg || "",
+        positionsDebugMsg: previousOptionsDataState.positionsDebugMsg || "",
       };
-      console.log("Bybit overlay: optionsDataState resolved to", optionsDataState.status, closedOrders.length, "orders");
+
+      if (historyResult.status === "fulfilled") {
+        nextState.orders = historyResult.value.orders;
+        nextState.ordersStatus = historyResult.value.orders.length > 0 ? "success" : "empty";
+        nextState.historyDebugMsg = historyResult.value.debugMsg || "";
+      } else {
+        nextState.ordersError = historyResult.reason instanceof Error
+          ? historyResult.reason.message
+          : "Unknown options history error";
+
+        if (!hadPreviousOrdersSnapshot) {
+          nextState.orders = [];
+          nextState.ordersStatus = "error";
+          nextState.historyDebugMsg = "";
+        } else {
+          nextState.ordersStale = true;
+        }
+      }
+
+      if (positionsResult.status === "fulfilled") {
+        nextState.positions = positionsResult.value.positions;
+        nextState.openSummary = buildOpenOptionsSummary(nextState.positions);
+        nextState.positionsStatus = positionsResult.value.positions.length > 0 ? "success" : "empty";
+        nextState.positionsDebugMsg = positionsResult.value.debugMsg || "";
+      } else {
+        nextState.positionsError = positionsResult.reason instanceof Error
+          ? positionsResult.reason.message
+          : "Unknown options positions error";
+
+        if (!hadPreviousPositionsSnapshot) {
+          nextState.positions = [];
+          nextState.openSummary = createEmptyOptionsOpenSummary();
+          nextState.positionsStatus = "error";
+          nextState.positionsDebugMsg = "";
+        } else {
+          nextState.positionsStale = true;
+        }
+      }
+
+      const hasRenderableData = nextState.ordersStatus !== "error" || nextState.positionsStatus !== "error";
+      if (!hasRenderableData) {
+        nextState.status = "error";
+        nextState.error = [nextState.positionsError, nextState.ordersError]
+          .filter(Boolean)
+          .join(" | ");
+        nextState.lastUpdatedAt = null;
+      } else if (historyResult.status === "fulfilled" || positionsResult.status === "fulfilled") {
+        nextState.lastUpdatedAt = new Date();
+      }
+
+      optionsDataState = nextState;
+      console.log(
+        "Bybit overlay: optionsDataState resolved to",
+        optionsDataState.status,
+        optionsDataState.positions.length,
+        "open positions and",
+        optionsDataState.orders.length,
+        "closed orders"
+      );
     } catch (error) {
-      console.error("Bybit overlay: loadOptionsHistory error:", error);
+      console.error("Bybit overlay: loadOptionsData error:", error);
       if (fetchId !== latestOptionsFetchId) {
         return;
       }
@@ -1491,6 +1978,7 @@
         ...optionsDataState,
         status: "error",
         error: error instanceof Error ? error.message : "Unknown fetch error",
+        isRefreshing: false,
       };
     } finally {
       if (fetchId === latestOptionsFetchId) {
@@ -1519,7 +2007,7 @@
   
   refreshButton.addEventListener("click", function handleRefresh() {
     if (state.activeTab === "options") {
-      loadOptionsHistory();
+      loadOptionsData();
     } else {
       loadOrders();
     }
@@ -1534,7 +2022,7 @@
           updateTabUI();
           renderDataState();
           if (newTab === "options" && optionsDataState.status === "loading") {
-            loadOptionsHistory();
+            loadOptionsData();
           } else if (newTab === "dual-asset" && dataState.status === "loading") {
             loadOrders();
           }
@@ -1585,6 +2073,6 @@
     updateTabUI();
     renderDataState();
     loadOrders();
-    loadOptionsHistory();
+    loadOptionsData();
   });
 })();
