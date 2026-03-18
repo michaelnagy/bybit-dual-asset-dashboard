@@ -108,6 +108,11 @@
     minimized: false,
     activeTab: "dual-asset",
     chartVisible: true,
+    sectionSummary: true,
+    sectionCostBasis: true,
+    sectionImbalance: true,
+    sectionChart: true,
+    sectionOrders: true,
   };
 
   if (document.getElementById(OVERLAY_ID)) {
@@ -165,11 +170,13 @@
   }
   let spotPrices = {};
   let selectedVwapProduct = null;
+  let selectedImbalanceProduct = null;
   let dataState = {
     status: "loading",
     error: null,
     lastUpdatedAt: null,
     orders: [],
+    imbalancePositions: [],
   };
   let optionsDataState = {
     status: "loading",
@@ -697,6 +704,98 @@
     };
   }
 
+  function buildImbalanceTracker(orders) {
+    const sorted = [...orders].sort(function bySettlement(a, b) {
+      const ta = (a.settlementTime || a.orderTime || new Date(0)).getTime();
+      const tb = (b.settlementTime || b.orderTime || new Date(0)).getTime();
+      return ta - tb;
+    });
+
+    const positions = {};
+
+    for (const order of sorted) {
+      if (order.status !== "Completed" || !order.proceedsToken) continue;
+
+      const pairKey = order.productName.split(" ")[0];
+      const isConverted = order.proceedsToken !== order.investmentToken;
+
+      if (!positions[pairKey]) {
+        positions[pairKey] = {
+          pair: pairKey,
+          baseAsset: order.baseAsset,
+          quoteAsset: order.quoteAsset,
+          netCryptoHolding: 0,
+          totalUsdtOutlay: 0,
+          totalPremiumsCrypto: 0,
+        };
+      }
+      const pos = positions[pairKey];
+
+      if (order.orderDirection === "Buy Low" && isConverted) {
+        pos.netCryptoHolding += order.proceeds;
+        pos.totalUsdtOutlay += order.investmentAmount;
+      } else if (order.orderDirection === "Sell High" && !isConverted && pos.netCryptoHolding > 0) {
+        if (order.profitAmount !== null && order.profitAmount > 0) {
+          pos.totalPremiumsCrypto += order.profitAmount;
+        }
+      } else if (order.orderDirection === "Sell High" && isConverted) {
+        if (pos.netCryptoHolding > 0 && pos.totalUsdtOutlay > 0) {
+          const avgEntry = pos.totalUsdtOutlay / pos.netCryptoHolding;
+          const soldCrypto = order.investmentAmount;
+          const proportionSold = Math.min(soldCrypto / pos.netCryptoHolding, 1);
+          pos.totalUsdtOutlay -= pos.totalUsdtOutlay * proportionSold;
+          pos.netCryptoHolding -= soldCrypto;
+          if (pos.netCryptoHolding < 1e-12) {
+            pos.netCryptoHolding = 0;
+            pos.totalUsdtOutlay = 0;
+            pos.totalPremiumsCrypto = 0;
+          }
+        }
+      }
+    }
+
+    const result = [];
+    const keys = Object.keys(positions);
+    for (var i = 0; i < keys.length; i++) {
+      var pos = positions[keys[i]];
+      if (pos.netCryptoHolding <= 0) continue;
+
+      var symbol = pos.pair.replace("-", "");
+      var currentPrice = spotPrices[symbol] || 0;
+      var avgEntryPrice = pos.totalUsdtOutlay / pos.netCryptoHolding;
+      var totalPremiumsUsdt = pos.totalPremiumsCrypto * currentPrice;
+      var currentValueUsdt = pos.netCryptoHolding * currentPrice;
+      var floatingPnlUsdt = currentValueUsdt - pos.totalUsdtOutlay;
+      var netPnlUsdt = floatingPnlUsdt + totalPremiumsUsdt;
+      var breakEvenPrice = pos.netCryptoHolding > 0
+        ? (pos.totalUsdtOutlay - totalPremiumsUsdt) / pos.netCryptoHolding
+        : 0;
+      var pctRecovered = pos.totalUsdtOutlay > 0
+        ? Math.min((totalPremiumsUsdt / pos.totalUsdtOutlay) * 100, 100)
+        : 0;
+
+      result.push({
+        pair: pos.pair,
+        baseAsset: pos.baseAsset,
+        quoteAsset: pos.quoteAsset,
+        symbol: symbol,
+        netCryptoHolding: pos.netCryptoHolding,
+        totalUsdtOutlay: pos.totalUsdtOutlay,
+        avgEntryPrice: avgEntryPrice,
+        currentPrice: currentPrice,
+        totalPremiumsCrypto: pos.totalPremiumsCrypto,
+        totalPremiumsUsdt: totalPremiumsUsdt,
+        currentValueUsdt: currentValueUsdt,
+        floatingPnlUsdt: floatingPnlUsdt,
+        netPnlUsdt: netPnlUsdt,
+        breakEvenPrice: breakEvenPrice,
+        pctRecovered: pctRecovered,
+      });
+    }
+
+    return result;
+  }
+
   function createEmptyOptionsOpenSummary() {
     return {
       callOpenSize: 0,
@@ -931,6 +1030,18 @@
     `;
   }
 
+  function sectionHeader(label, stateKey, rightHtml) {
+    var isOpen = state[stateKey] !== false;
+    return '<div class="bybit-da-section-header">'
+      + '<div class="bybit-da-section-header-left">'
+      + '<button type="button" class="bybit-da-section-toggle" data-toggle-section="' + stateKey + '">'
+      + (isOpen ? '▾' : '▸') + '</button>'
+      + '<div class="bybit-da-overlay-label bybit-da-section-label" style="margin:0">' + escapeHtml(label) + '</div>'
+      + '</div>'
+      + (rightHtml || '')
+      + '</div>';
+  }
+
   function renderSuccessState() {
     const summary = buildSummary(dataState.orders);
     const lastUpdatedLabel = dataState.lastUpdatedAt ? formatDateTime(dataState.lastUpdatedAt) : "-";
@@ -995,11 +1106,8 @@
         return '<button type="button" class="bybit-da-vwap-tab' + (isActive ? ' is-active' : '') + '" data-vwap-product="' + escapeHtml(tp.product) + '">' + escapeHtml(tp.product.split("-")[0]) + '</button>';
       }).join("");
 
-      vwapHtml = `
-        <div class="bybit-da-vwap-header">
-          <div class="bybit-da-overlay-label bybit-da-section-label" style="margin:0">Cost Basis & Trading</div>
-          <div class="bybit-da-vwap-tabs">${tabsHtml}</div>
-        </div>
+      vwapHtml = sectionHeader("Cost Basis & Trading", "sectionCostBasis", '<div class="bybit-da-vwap-tabs">' + tabsHtml + '</div>')
+        + (state.sectionCostBasis !== false ? `
         <div class="bybit-da-overlay-card bybit-da-vwap-card">
           <div class="bybit-da-vwap-row">
             <div>
@@ -1025,24 +1133,86 @@
             💡 Set your <strong>Sell High</strong> target above <strong>${targetTp.convertedBuyVwap > 0 ? escapeHtml(formatNumber(targetTp.convertedBuyVwap, { minimumFractionDigits: 2, maximumFractionDigits: 4 })) : "the cost basis"}</strong> to profit from the spread on top of the premium.
           </div>
         </div>
-      `;
+      ` : "");
     }
 
-    const chartToggleLabel = state.chartVisible ? "Hide" : "Show";
+    const chartLegend = state.sectionChart !== false
+      ? '<span style="font-size:10px;color:#34d399;">■ Yield</span> <span style="font-size:10px;color:#60a5fa;">■ Trading</span> <span style="font-size:10px;color:#f59e0b;">■ Total</span>'
+      : '';
     const chartHtml = summary.timelinePoints.length > 1
-      ? `<div class="bybit-da-overlay-card">
-          <div class="bybit-da-overlay-label" style="display:flex; justify-content:space-between; align-items:center;">
-            <span>Cumulative Profit Timeline</span>
-            <div style="display:flex; gap:12px; align-items:center;">
-              ${state.chartVisible ? `<span style="color:#34d399;">■ Yield</span>
-              <span style="color:#60a5fa;">■ Trading</span>
-              <span style="color:#f59e0b;">■ Total</span>` : ""}
-              <button type="button" class="bybit-da-chart-toggle" data-action="toggle-chart" style="background:none; border:1px solid rgba(148,163,184,0.3); color:#94a3b8; font-size:10px; padding:2px 8px; border-radius:4px; cursor:pointer;">${chartToggleLabel}</button>
+      ? sectionHeader("Cumulative Profit Timeline", "sectionChart", chartLegend)
+        + (state.sectionChart !== false ? `<div class="bybit-da-overlay-card">
+          <div class="bybit-da-chart-wrap">${buildSvgTimeline(summary.timelinePoints, 440, 160)}</div>
+        </div>` : "")
+      : "";
+
+    let imbalanceHtml = "";
+    const imbalancePositions = dataState.imbalancePositions || [];
+    if (imbalancePositions.length > 0) {
+      if (!selectedImbalanceProduct) {
+        selectedImbalanceProduct = imbalancePositions[0].pair;
+      }
+      const activePos = imbalancePositions.find(function(p) { return p.pair === selectedImbalanceProduct; }) || imbalancePositions[0];
+
+      const imbalanceTabsHtml = imbalancePositions.map(function(p) {
+        const isActive = p.pair === activePos.pair;
+        return '<button type="button" class="bybit-da-vwap-tab' + (isActive ? ' is-active' : '') + '" data-imbalance-product="' + escapeHtml(p.pair) + '">' + escapeHtml(p.baseAsset) + '</button>';
+      }).join("");
+
+      var floatingClass = activePos.floatingPnlUsdt >= 0 ? "is-positive" : "is-negative";
+      var netClass = activePos.netPnlUsdt >= 0 ? "is-positive" : "is-negative";
+      var progressPct = Math.max(0, Math.min(100, activePos.pctRecovered));
+
+      imbalanceHtml = sectionHeader("Imbalance Tracker", "sectionImbalance", '<div class="bybit-da-vwap-tabs">' + imbalanceTabsHtml + '</div>')
+        + (state.sectionImbalance !== false ? `
+        <div class="bybit-da-overlay-card bybit-da-imbalance-card">
+          <div class="bybit-da-imbalance-grid">
+            <div class="bybit-da-imbalance-metric">
+              <div class="bybit-da-imbalance-label">Avg Entry Price</div>
+              <div class="bybit-da-imbalance-value">${escapeHtml(formatUsd(activePos.avgEntryPrice))}</div>
+            </div>
+            <div class="bybit-da-imbalance-metric">
+              <div class="bybit-da-imbalance-label">Current Price</div>
+              <div class="bybit-da-imbalance-value">${activePos.currentPrice > 0 ? escapeHtml(formatUsd(activePos.currentPrice)) : "-"}</div>
+            </div>
+            <div class="bybit-da-imbalance-metric">
+              <div class="bybit-da-imbalance-label">Holding</div>
+              <div class="bybit-da-imbalance-value">${escapeHtml(formatAmount(activePos.netCryptoHolding, activePos.baseAsset, 6))}</div>
+            </div>
+            <div class="bybit-da-imbalance-metric">
+              <div class="bybit-da-imbalance-label">Cost Basis</div>
+              <div class="bybit-da-imbalance-value">${escapeHtml(formatUsd(activePos.totalUsdtOutlay))}</div>
             </div>
           </div>
-          ${state.chartVisible ? `<div class="bybit-da-chart-wrap">${buildSvgTimeline(summary.timelinePoints, 440, 160)}</div>` : ""}
-        </div>`
-      : "";
+          <div class="bybit-da-imbalance-divider"></div>
+          <div class="bybit-da-imbalance-grid">
+            <div class="bybit-da-imbalance-metric">
+              <div class="bybit-da-imbalance-label">Floating P&L</div>
+              <div class="bybit-da-imbalance-value ${floatingClass}">${escapeHtml(formatUsd(activePos.floatingPnlUsdt))}</div>
+            </div>
+            <div class="bybit-da-imbalance-metric">
+              <div class="bybit-da-imbalance-label">Premiums Earned</div>
+              <div class="bybit-da-imbalance-value is-positive">${escapeHtml(formatAmount(activePos.totalPremiumsCrypto, activePos.baseAsset, 6))}</div>
+              <div class="bybit-da-muted">${activePos.totalPremiumsUsdt > 0 ? "~" + escapeHtml(formatUsd(activePos.totalPremiumsUsdt)) : ""}</div>
+            </div>
+            <div class="bybit-da-imbalance-metric">
+              <div class="bybit-da-imbalance-label">Net P&L</div>
+              <div class="bybit-da-imbalance-value ${netClass}">${escapeHtml(formatUsd(activePos.netPnlUsdt))}</div>
+            </div>
+            <div class="bybit-da-imbalance-metric">
+              <div class="bybit-da-imbalance-label">Breakeven Price</div>
+              <div class="bybit-da-imbalance-value">${activePos.breakEvenPrice > 0 ? escapeHtml(formatUsd(activePos.breakEvenPrice)) : "-"}</div>
+            </div>
+          </div>
+          <div class="bybit-da-imbalance-progress-wrap">
+            <div class="bybit-da-imbalance-progress-bar">
+              <div class="bybit-da-imbalance-progress-fill" style="width:${progressPct.toFixed(1)}%"></div>
+            </div>
+            <div class="bybit-da-imbalance-progress-label">${escapeHtml(formatNumber(progressPct, { minimumFractionDigits: 1, maximumFractionDigits: 1 }))}% recovered by premiums</div>
+          </div>
+        </div>
+      ` : "");
+    }
 
     bodyEl.innerHTML = `
       ${getStateBadge()}
@@ -1050,7 +1220,8 @@
         <span>Last refresh: ${escapeHtml(lastUpdatedLabel)}</span>
         <span>Orders: ${escapeHtml(String(dataState.orders.length))}</span>
       </div>
-      <div class="bybit-da-overlay-grid">
+      ${sectionHeader("Summary", "sectionSummary")}
+      ${state.sectionSummary !== false ? `<div class="bybit-da-overlay-grid">
         <div class="bybit-da-overlay-card">
           <div class="bybit-da-overlay-label">Total Profit from Premium (Yield)</div>
           <div class="bybit-da-overlay-value">${escapeHtml(formatUsd(summary.totalUsdtProfit))}</div>
@@ -1080,11 +1251,12 @@
           <div class="bybit-da-overlay-value">${escapeHtml(formatPercent(summary.avgApr))}</div>
           <div class="bybit-da-muted" style="margin-top:4px">${escapeHtml(formatPercent(summary.avgSettledApr))}</div>
         </div>
-      </div>
+      </div>` : ""}
       ${vwapHtml}
+      ${imbalanceHtml}
       ${chartHtml}
-      <div class="bybit-da-overlay-card">
-        <div class="bybit-da-overlay-label">Dual Asset Orders</div>
+      ${sectionHeader("Dual Asset Orders", "sectionOrders")}
+      ${state.sectionOrders !== false ? `<div class="bybit-da-overlay-card">
         <div class="bybit-da-overlay-table-wrap">
           <table class="bybit-da-overlay-table">
             <thead>
@@ -1105,7 +1277,7 @@
             <tbody>${rowsHtml}</tbody>
           </table>
         </div>
-      </div>
+      </div>` : ""}
     `;
   }
 
@@ -1472,12 +1644,23 @@
     window.addEventListener("pointerup", onUp);
   }
 
-  async function fetchSpotPrices(orders) {
+  async function fetchSpotPrices(orders, extraSymbols) {
     const symbols = new Set();
     for (var i = 0; i < orders.length; i++) {
       if (orders[i].status === "Active") {
         var pair = orders[i].productName.split(" ")[0].replace("-", "");
         symbols.add(pair);
+      }
+      var isConverted = orders[i].status === "Completed"
+        && orders[i].proceedsToken !== null
+        && orders[i].proceedsToken !== orders[i].investmentToken;
+      if (isConverted) {
+        symbols.add(orders[i].productName.split(" ")[0].replace("-", ""));
+      }
+    }
+    if (extraSymbols) {
+      for (var j = 0; j < extraSymbols.length; j++) {
+        symbols.add(extraSymbols[j]);
       }
     }
 
@@ -1620,11 +1803,14 @@
       const normalized = allRows.map(normalizeOrder);
       await fetchSpotPrices(normalized);
 
+      const imbalancePositions = buildImbalanceTracker(normalized);
+
       dataState = {
         status: normalized.length ? "success" : "empty",
         error: null,
         lastUpdatedAt: new Date(),
         orders: normalized,
+        imbalancePositions: imbalancePositions,
       };
     } catch (error) {
       if (fetchId !== latestDualAssetFetchId) {
@@ -2048,10 +2234,21 @@
       return;
     }
 
-    var chartToggle = e.target && e.target.closest("[data-action='toggle-chart']");
-    if (chartToggle) {
-      persistAndRender({ chartVisible: !state.chartVisible });
+    var imbalanceTab = e.target && e.target.closest("[data-imbalance-product]");
+    if (imbalanceTab) {
+      selectedImbalanceProduct = imbalanceTab.getAttribute("data-imbalance-product");
       renderDataState();
+      return;
+    }
+
+    var sectionToggle = e.target && e.target.closest("[data-toggle-section]");
+    if (sectionToggle) {
+      var key = sectionToggle.getAttribute("data-toggle-section");
+      var update = {};
+      update[key] = state[key] === false ? true : false;
+      persistAndRender(update);
+      renderDataState();
+      return;
     }
   });
 
