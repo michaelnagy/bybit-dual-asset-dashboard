@@ -1561,7 +1561,7 @@
     const height = clamp(nextState.height, 220, Math.max(220, viewport.height - 24));
     const top = clamp(nextState.top, 12, Math.max(12, viewport.height - 80));
 
-    windowEl.style.width = `${width}px`;
+    windowEl.style.width = nextState.minimized ? "auto" : `${width}px`;
     windowEl.style.height = nextState.minimized ? "auto" : `${height}px`;
     windowEl.style.top = `${top}px`;
 

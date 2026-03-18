@@ -30,6 +30,25 @@
 .bybit-da-overlay-window[data-minimized="true"] {
   height: auto !important;
   min-height: 0;
+  min-width: 0;
+  width: auto !important;
+  border-radius: 12px;
+}
+
+.bybit-da-overlay-window[data-minimized="true"] .bybit-da-overlay-header {
+  padding: 8px 12px;
+  gap: 10px;
+  border-bottom: none;
+}
+
+.bybit-da-overlay-window[data-minimized="true"] .bybit-da-overlay-subtitle,
+.bybit-da-overlay-window[data-minimized="true"] .bybit-da-tab-bar,
+.bybit-da-overlay-window[data-minimized="true"] [data-action="refresh"] {
+  display: none;
+}
+
+.bybit-da-overlay-window[data-minimized="true"] .bybit-da-overlay-title {
+  font-size: 12px;
 }
 
 .bybit-da-overlay-header {
@@ -101,6 +120,18 @@
 .bybit-da-overlay-window[data-minimized="true"] .bybit-da-overlay-body,
 .bybit-da-overlay-window[data-minimized="true"] .bybit-da-overlay-resize-handle {
   display: none;
+}
+
+.bybit-da-overlay-window[data-minimized="true"] .bybit-da-overlay-title-wrap {
+  gap: 0;
+}
+
+.bybit-da-overlay-window[data-minimized="true"] .bybit-da-overlay-button {
+  min-width: 26px;
+  height: 26px;
+  padding: 0 6px;
+  font-size: 12px;
+  border-radius: 8px;
 }
 
 .bybit-da-overlay-badge {
