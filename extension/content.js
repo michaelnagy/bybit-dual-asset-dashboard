@@ -107,6 +107,7 @@
     height: 420,
     minimized: false,
     activeTab: "dual-asset",
+    chartVisible: true,
   };
 
   if (document.getElementById(OVERLAY_ID)) {
@@ -535,8 +536,8 @@
         vwap[key].aprCount += 1;
       }
 
-      if (order.settledApr !== null && order.settledApr > 0) {
-        vwap[key].settledAprSum += order.settledApr;
+      if (order.realApr !== null && order.realApr > 0) {
+        vwap[key].settledAprSum += order.realApr;
         vwap[key].settledAprCount += 1;
       }
 
@@ -653,8 +654,8 @@
         aprCount += 1;
       }
 
-      if (sorted[j].settledApr !== null && sorted[j].settledApr > 0) {
-        settledAprSum += sorted[j].settledApr;
+      if (sorted[j].realApr !== null && sorted[j].realApr > 0) {
+        settledAprSum += sorted[j].realApr;
         settledAprCount += 1;
       }
     }
@@ -1027,17 +1028,19 @@
       `;
     }
 
+    const chartToggleLabel = state.chartVisible ? "Hide" : "Show";
     const chartHtml = summary.timelinePoints.length > 1
       ? `<div class="bybit-da-overlay-card">
-          <div class="bybit-da-overlay-label" style="display:flex; justify-content:space-between;">
+          <div class="bybit-da-overlay-label" style="display:flex; justify-content:space-between; align-items:center;">
             <span>Cumulative Profit Timeline</span>
-            <div style="display:flex; gap:12px;">
-              <span style="color:#34d399;">■ Yield</span>
+            <div style="display:flex; gap:12px; align-items:center;">
+              ${state.chartVisible ? `<span style="color:#34d399;">■ Yield</span>
               <span style="color:#60a5fa;">■ Trading</span>
-              <span style="color:#f59e0b;">■ Total</span>
+              <span style="color:#f59e0b;">■ Total</span>` : ""}
+              <button type="button" class="bybit-da-chart-toggle" data-action="toggle-chart" style="background:none; border:1px solid rgba(148,163,184,0.3); color:#94a3b8; font-size:10px; padding:2px 8px; border-radius:4px; cursor:pointer;">${chartToggleLabel}</button>
             </div>
           </div>
-          <div class="bybit-da-chart-wrap">${buildSvgTimeline(summary.timelinePoints, 440, 160)}</div>
+          ${state.chartVisible ? `<div class="bybit-da-chart-wrap">${buildSvgTimeline(summary.timelinePoints, 440, 160)}</div>` : ""}
         </div>`
       : "";
 
@@ -2037,10 +2040,17 @@
     applyState(state);
   });
   
-  bodyEl.addEventListener("click", function handleVwapTabClick(e) {
+  bodyEl.addEventListener("click", function handleBodyClick(e) {
     var tab = e.target && e.target.closest("[data-vwap-product]");
     if (tab) {
       selectedVwapProduct = tab.getAttribute("data-vwap-product");
+      renderDataState();
+      return;
+    }
+
+    var chartToggle = e.target && e.target.closest("[data-action='toggle-chart']");
+    if (chartToggle) {
+      persistAndRender({ chartVisible: !state.chartVisible });
       renderDataState();
     }
   });
