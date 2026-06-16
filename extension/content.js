@@ -194,6 +194,7 @@
     positionsError: null,
     historyDebugMsg: "",
     positionsDebugMsg: "",
+    detectedTrades: [],
   };
 
   function clamp(value, min, max) {
@@ -807,15 +808,99 @@
     };
   }
 
+  const OPTION_SYMBOL_RE = /^([A-Z]+)-(\d{1,2}[A-Z]{3}\d{2})-(\d+(?:\.\d+)?)-([CP])$/;
+  const OPTION_MONTHS = {
+    JAN: 0, FEB: 1, MAR: 2, APR: 3, MAY: 4, JUN: 5,
+    JUL: 6, AUG: 7, SEP: 8, OCT: 9, NOV: 10, DEC: 11,
+  };
+
+  function parseOptionSymbol(symbol) {
+    const m = OPTION_SYMBOL_RE.exec(String(symbol || "").trim().toUpperCase());
+    if (!m) return null;
+    const base = m[1];
+    const expiryStr = m[2];
+    const day = parseInt(expiryStr.slice(0, -5), 10);
+    const mon = OPTION_MONTHS[expiryStr.slice(-5, -2)];
+    let yr = parseInt(expiryStr.slice(-2), 10);
+    if (Number.isNaN(day) || mon === undefined || Number.isNaN(yr)) return null;
+    yr = yr < 70 ? 2000 + yr : 1900 + yr;
+    const expiryDate = new Date(Date.UTC(yr, mon, day));
+    if (Number.isNaN(expiryDate.getTime())) return null;
+    return {
+      base,
+      expiry: expiryStr,
+      expiryDate,
+      strike: parseFloat(m[3]),
+      type: m[4],
+    };
+  }
+
   function parseOptionTypeFromSymbol(symbol) {
-    const normalizedSymbol = String(symbol || "").trim().toUpperCase();
-    if (normalizedSymbol.endsWith("-C")) {
-      return "CALL";
+    const parsed = parseOptionSymbol(symbol);
+    if (!parsed) return null;
+    return parsed.type === "C" ? "CALL" : "PUT";
+  }
+
+  function detectDoubleCalendars(positions) {
+    const trades = [];
+    if (!Array.isArray(positions) || positions.length === 0) return trades;
+
+    const parsedPositions = [];
+    for (const pos of positions) {
+      const parsedSym = parseOptionSymbol(pos.symbol);
+      if (!parsedSym) continue;
+      parsedPositions.push({ pos, parsedSym });
     }
-    if (normalizedSymbol.endsWith("-P")) {
-      return "PUT";
+
+    const byStrikeBase = {};
+    for (const { pos, parsedSym } of parsedPositions) {
+      const key = `${parsedSym.base}|${parsedSym.strike}`;
+      if (!byStrikeBase[key]) byStrikeBase[key] = [];
+      byStrikeBase[key].push({ pos, parsedSym });
     }
-    return null;
+
+    for (const key of Object.keys(byStrikeBase)) {
+      const group = byStrikeBase[key];
+      const expiries = {};
+      for (const { pos, parsedSym } of group) {
+        const eKey = parsedSym.expiryDate.getTime();
+        if (!expiries[eKey]) expiries[eKey] = { expiry: parsedSym.expiry, expiryDate: parsedSym.expiryDate, legs: [] };
+        expiries[eKey].legs.push({ ...pos, parsedSym });
+      }
+      const expiryKeys = Object.keys(expiries).sort((a, b) => Number(a) - Number(b));
+      if (expiryKeys.length < 2) continue;
+
+      const front = expiries[expiryKeys[0]];
+      const back = expiries[expiryKeys[expiryKeys.length - 1]];
+
+      const findLeg = (bucket, type, side) => bucket.legs.find(l => l.parsedSym.type === type && l.side === side);
+
+      const shortFrontCall = findLeg(front, "C", "Sell");
+      const longBackCall   = findLeg(back,  "C", "Buy");
+      const shortFrontPut  = findLeg(front, "P", "Sell");
+      const longBackPut    = findLeg(back,  "P", "Buy");
+
+      if (!shortFrontCall || !longBackCall || !shortFrontPut || !longBackPut) continue;
+
+      const base = front.legs[0].parsedSym.base;
+      const strike = front.legs[0].parsedSym.strike;
+
+      trades.push({
+        base,
+        strike,
+        frontExpiry: front.expiry,
+        backExpiry: back.expiry,
+        frontExpiryDate: front.expiryDate,
+        backExpiryDate: back.expiryDate,
+        legs: {
+          shortFrontCall, longBackCall, shortFrontPut, longBackPut,
+        },
+        status: "open",
+      });
+    }
+
+    console.log("[bybit-overlay] detected double calendars:", trades);
+    return trades;
   }
 
   function normalizeOpenOptionPosition(row) {
@@ -2097,6 +2182,7 @@
         positionsError: null,
         historyDebugMsg: previousOptionsDataState.historyDebugMsg || "",
         positionsDebugMsg: previousOptionsDataState.positionsDebugMsg || "",
+        detectedTrades: previousOptionsDataState.detectedTrades || [],
       };
 
       if (historyResult.status === "fulfilled") {
@@ -2122,6 +2208,7 @@
         nextState.openSummary = buildOpenOptionsSummary(nextState.positions);
         nextState.positionsStatus = positionsResult.value.positions.length > 0 ? "success" : "empty";
         nextState.positionsDebugMsg = positionsResult.value.debugMsg || "";
+        nextState.detectedTrades = detectDoubleCalendars(nextState.positions);
       } else {
         nextState.positionsError = positionsResult.reason instanceof Error
           ? positionsResult.reason.message
