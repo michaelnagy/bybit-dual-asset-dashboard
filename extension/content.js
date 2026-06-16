@@ -6,6 +6,20 @@
   const OPTIONS_HISTORY_ENDPOINT = "https://www.bybit.com/x-api/unified/option/v5/queryUserOrderHistory";
   const OPTIONS_POSITION_ENDPOINT_CANDIDATES = [
     {
+      id: "webUnifiedIntegratedQueryPositions",
+      url: "https://www.bybit.com/x-api/unified/integrated/v5/queryPositions",
+      method: "POST",
+      initialCursor: "0",
+      buildBody: function buildBody(cursor) {
+        return {
+          category: "option",
+          baseCoin: "",
+          limit: 200,
+          cursor: cursor || "0",
+        };
+      },
+    },
+    {
       id: "webQueryPositionList",
       url: "https://www.bybit.com/x-api/unified/option/v5/queryPositionList",
       method: "POST",
