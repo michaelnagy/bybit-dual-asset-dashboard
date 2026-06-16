@@ -81,6 +81,38 @@
         return params;
       },
     },
+    {
+      id: "webUnifiedPositionList",
+      url: "https://www.bybit.com/x-api/unified/position/list",
+      method: "GET",
+      initialCursor: "",
+      buildParams: function buildParams(cursor) {
+        const params = new URLSearchParams({
+          category: "option",
+          limit: "200",
+        });
+        if (cursor) {
+          params.set("cursor", cursor);
+        }
+        return params;
+      },
+    },
+    {
+      id: "webPositionList",
+      url: "https://www.bybit.com/x-api/position/list",
+      method: "GET",
+      initialCursor: "",
+      buildParams: function buildParams(cursor) {
+        const params = new URLSearchParams({
+          category: "option",
+          limit: "200",
+        });
+        if (cursor) {
+          params.set("cursor", cursor);
+        }
+        return params;
+      },
+    },
   ];
   const COIN_SYMBOLS = {
     2: "ETH",
@@ -2208,7 +2240,6 @@
         nextState.openSummary = buildOpenOptionsSummary(nextState.positions);
         nextState.positionsStatus = positionsResult.value.positions.length > 0 ? "success" : "empty";
         nextState.positionsDebugMsg = positionsResult.value.debugMsg || "";
-        nextState.detectedTrades = detectDoubleCalendars(nextState.positions);
       } else {
         nextState.positionsError = positionsResult.reason instanceof Error
           ? positionsResult.reason.message
@@ -2223,6 +2254,9 @@
           nextState.positionsStale = true;
         }
       }
+
+      nextState.detectedTrades = detectDoubleCalendars(nextState.positions);
+      console.log("[bybit-overlay] detected double calendars:", nextState.detectedTrades.length, "trades from", nextState.positions.length, "positions");
 
       const hasRenderableData = nextState.ordersStatus !== "error" || nextState.positionsStatus !== "error";
       if (!hasRenderableData) {
